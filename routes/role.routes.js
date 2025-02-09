@@ -2,9 +2,9 @@ const express = require("express");
 const router = express.Router();
 const { createRole } = require("../middlewares/role.middleware");
 const { assignRoleToUser, userHasRole } = require("../middlewares/permissions.middleware");
+const { authenticateUser, verifyAdmin} = require("../middlewares/auth.middleware");
 
-
-router.post("/createRole", async (req, res) => {
+router.post("/createRole", authenticateUser, verifyAdmin, async (req, res) => {
   const { id, name, description } = req.body;
   try {
     await createRole(id, name, description);
@@ -14,7 +14,7 @@ router.post("/createRole", async (req, res) => {
   }
 });
 
-router.post("/assignRole", async (req, res) => {
+router.post("/assignRole", authenticateUser, verifyAdmin, async (req, res) => {
   const { userId, roleId } = req.body;
   try {
     await assignRoleToUser(userId, roleId);
@@ -24,7 +24,7 @@ router.post("/assignRole", async (req, res) => {
   }
 });
 
-router.get("/hasRole", async (req, res) => {
+router.get("/hasRole" , authenticateUser, verifyAdmin,  async (req, res) => {
   const { userId, roleId } = req.body;
   try {
     const hasRole = await userHasRole(userId, roleId);

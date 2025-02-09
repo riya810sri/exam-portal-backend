@@ -1,19 +1,36 @@
 const Permission = require("../models/permissions.model");
 const User = require("../models/user.model");
 async function assignRoleToUser(userId, roleId) {
-  const permission = new Permission({
-    userId,
-    roleId,
-  });
-
-  await permission.save();
-
-  // Update the user's isAdmin field
   const user = await User.findById(userId);
-  if (user && roleId == 1) {
-    console.log("user assigned to admin role")
-    user.isAdmin = true;
+
+  if (user) {
+    // Check if the user is already an admin
+    if (user.isAdmin && roleId === 1) {
+      console.log(
+        "User is already an admin and cannot assign role to themselves."
+      );
+      return;
+    }
+
+    // Assign the role and update the user's isAdmin field
+    const permission = new Permission({
+      userId,
+      roleId,
+    });
+
+    await permission.save();
+
+    if (roleId === 1) {
+      user.isAdmin = true;
+      console.log("User assigned to admin role.");
+    } else {
+      user.isAdmin = false;
+      console.log("User assigned to non-admin role.");
+    }
+
     await user.save();
+  } else {
+    console.log("User not found.");
   }
 }
 
