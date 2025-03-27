@@ -12,12 +12,17 @@ const addQuestion = async (req, res) => {
 
     const createdQuestions = [];
     for (const questionData of questions) {
-      // Create and save the question
-      const question = new Question({
+      // Map incoming fields to match schema
+      const questionDoc = {
         examId,
-        ...questionData,
-      });
+        type: questionData.type,
+        questionText: questionData.text || questionData.questionText, // Handle both field names
+        options: questionData.options,
+        correctAnswer: questionData.correctAnswer,
+      };
 
+      // Create and save the question
+      const question = new Question(questionDoc);
       const savedQuestion = await question.save();
       createdQuestions.push(savedQuestion);
 
