@@ -13,7 +13,8 @@ logs/
 .cache/
 .vscode/
 
-
+tmp/
+tmp/*
 
 # Backend
 .env
