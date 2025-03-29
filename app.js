@@ -10,6 +10,7 @@ const examRoutes = require("./routes/exams.routes");
 const questionRoutes = require("./routes/questions.routes");
 const roleRoutes = require("./routes/role.routes");
 const certificateRoutes = require("./routes/certificate.routes");
+const examAttendanceRoutes = require("./routes/examAttendance.routes");
 
 const app = express();
 port = process.env.port || 8000;
@@ -23,6 +24,7 @@ app.use("/api/exams", examRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/roles", roleRoutes);
 app.use('/api/certificate', certificateRoutes);
+app.use('/api/exam-attendance', examAttendanceRoutes);
 // Connect to MongoDB
 connectDB();
 

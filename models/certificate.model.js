@@ -37,6 +37,18 @@ const certificateSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    examTitle: {
+        type: String,
+        trim: true
+    },
+    score: {
+        type: String,
+        trim: true
+    },
+    passed: {
+        type: Boolean,
+        default: true
+    },
     createdAt: {
         type: Date,
         default: Date.now

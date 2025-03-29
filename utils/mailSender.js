@@ -42,4 +42,64 @@ const mailSender = async (email, subject, html, attachments) => {
   }
 };
 
-module.exports = mailSender;
+/**
+ * Sends a certificate email
+ * @param {Object} params - Parameters for the email
+ * @param {string} params.email - Recipient email address
+ * @param {string} params.subject - Email subject
+ * @param {string} params.name - Recipient name
+ * @param {string} params.certificateId - Certificate ID
+ * @param {string} params.examTitle - Exam title
+ * @param {boolean} params.passed - Exam pass status
+ * @param {string} params.certificatePath - Path to the certificate file
+ * @returns {Promise<boolean>} - Success status
+ */
+const sendCertificateEmail = async ({ email, subject, name, certificateId, examTitle, passed, certificatePath }) => {
+  try {
+    console.log(`Sending email with certificate attachment to ${email}`);
+    
+    // Create email with attachment
+    const transporter = nodemailer.createTransport({
+      host: process.env.MAIL_HOST,
+      port: process.env.MAIL_PORT,
+      secure: process.env.MAIL_PORT == 465,
+      auth: {
+        user: process.env.USER1,
+        pass: process.env.PASS,
+      },
+      logger: true,
+      debug: true,
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || 'your-email@example.com',
+      to: email,
+      subject: subject,
+      html: `
+        <h1>${passed ? 'Congratulations' : 'Exam Results'}!</h1>
+        <p>Hello ${name},</p>
+        <p>You have ${passed ? 'successfully completed' : 'completed'} the exam <b>${examTitle}</b>.</p>
+        <p>${passed ? 'Your certificate is attached to this email.' : 'Your results are attached to this email.'}</p>
+        <p>Certificate ID: ${certificateId}</p>
+        <p>Thank you!</p>
+      `,
+      attachments: [
+        {
+          filename: `${examTitle.replace(/\s+/g, '_')}_Certificate.pdf`,
+          path: certificatePath,
+          contentType: 'application/pdf'
+        }
+      ]
+    };
+    
+    // Send email
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`Email sent: ${info.messageId}`);
+    return true;
+  } catch (error) {
+    console.error("Error sending certificate email:", error);
+    return false;
+  }
+};
+
+module.exports = { mailSender, sendCertificateEmail };

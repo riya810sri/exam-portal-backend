@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const fontkit = require('fontkit');  // Add this import
-const mailSender = require('../utils/mailSender'); // Import mailSender module
+const { mailSender } = require('../utils/mailSender'); // Fix: Destructure mailSender from the module
 const Certificate = require('../models/certificate.model'); // Add this import
 
 class CertificateGenerator {
@@ -155,8 +155,9 @@ class CertificateGenerator {
                     positions.dateOfIssue.y);
 
             // Generate output filename in Certificate folder
-            const outputPath = path.join(__dirname, `../tmp/certificate-${certificateId}.pdf`);
-            // Save the PDF path.join(__dirname, '../tmp/techonquer-cert.jpeg');
+            const outputPath = path.join(certDir, `certificate-${certificateId}.pdf`);
+            
+            // Save the PDF
             return new Promise((resolve, reject) => {
                 const writeStream = fs.createWriteStream(outputPath);
                 this.doc.pipe(writeStream);
@@ -178,10 +179,10 @@ class CertificateGenerator {
 
     // Helper method to ensure Certificate directory exists
     ensureCertificateDir() {
-        const certDir = path.join(__dirname, 'Certificate');
+        const certDir = path.join(__dirname, '../tmp');
         if (!fs.existsSync(certDir)) {
             fs.mkdirSync(certDir);
-            console.log('Certificate directory created');
+            console.log('tmp directory created');
         }
         return certDir;
     }
@@ -192,92 +193,144 @@ const generator = new CertificateGenerator();
 
 // Controller functions
 // Generate certificate controller
-const generateCertificate = (req, res) => {
+const generateCertificate = async (data, res) => {
     try {
-        const { name, certificateId, directorName, dateOfIssue, email } = req.body;
-        
-        // Validate required fields
-        if (!name || !certificateId || !directorName || !dateOfIssue) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Missing required fields' 
-            });
+        // Check if this is a direct API call or programmatic call
+        let certificateData = data;
+        if (data.body) {
+            // This is a direct API call through HTTP request
+            certificateData = data.body;
+            res = data; // Assign the request object to res
         }
         
+        const { name, directorName, dateOfIssue, email, examTitle, passed = true } = certificateData;
+        
+        // Only generate certificates for passing students (controlled by the exam controller)
+        // This is a safety check in case this function is called directly
+        if (!passed && !res) {
+            // If called programmatically and student failed, don't generate certificate
+            return {
+                success: false,
+                message: "Certificate not generated - student did not pass"
+            };
+        }
+        
+        // Generate a short certificateId (max 11 chars)
+        const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
+        const randomSuffix = Math.random().toString(36).substring(2, 5); // 3 random chars
+        const certificateId = `TC${timestamp}${randomSuffix}`.substring(0, 11); // TC + timestamp + random, max 11 chars
+        
+        // Validate required fields
+        if (!name || !directorName || !dateOfIssue) {
+            const errorMsg = 'Missing required certificate fields';
+            if (res && res.status) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: errorMsg
+                });
+            }
+            throw new Error(errorMsg);
+        }
+        
+        console.log(`Generating certificate for ${name}, ID: ${certificateId}`);
+        
         // Generate certificate
-        generator.generateCertificate({
+        const certificatePath = await generator.generateCertificate({
             name,
             certificateId,
             directorName,
             dateOfIssue,
             email
-        })
-        .then(async certificatePath => {
-            let emailSent = false;
-            
-            // Send email if email is provided
-            if (email) {
-                try {
-                    const attachments = [{
-                        filename: `certificate-${certificateId}.pdf`,
-                        path: certificatePath
-                    }];
-                    
-                    const emailSubject = 'Your TechOnquer Certificate';
-                    const emailText = `
-                        <p>Dear ${name},</p>
-                        <p>Congratulations on your achievement! Please find your certificate attached.</p>
-                        <p>Certificate ID: ${certificateId}</p>
-                        <p>Date of Issue: ${dateOfIssue}</p>
-                        <p>Best regards,<br>${directorName}</p>
-                    `;
-                    
-                    await mailSender(email, emailSubject, emailText, attachments);
-                    console.log(`Certificate sent to ${email}`);
-                    emailSent = false;
-                } catch (emailError) {
-                    console.error('Error sending email:', emailError);
-                }
-            }
-            
-            // Save certificate to database
+        });
+        
+        let emailSent = false;
+        
+        // Send email if email is provided
+        if (email) {
             try {
-                await Certificate.create({
-                    name,
-                    certificateId,
-                    directorName,
-                    dateOfIssue,
-                    email,
-                    certificatePath,
-                    emailSent
-                });
-                console.log('Certificate saved to database');
-            } catch (dbError) {
-                console.error('Error saving to database:', dbError);
+                const attachments = [{
+                    filename: `certificate-${certificateId}.pdf`,
+                    path: certificatePath
+                }];
+                
+                // Create email subject and text for certificate
+                const emailSubject = examTitle 
+                    ? `Your TechOnquer Certificate for ${examTitle}` 
+                    : `Your TechOnquer Certificate`;
+                
+                const emailText = `
+                    <p>Dear ${name},</p>
+                    <p>Congratulations on successfully completing the exam${examTitle ? ` "${examTitle}"` : ''}!</p>
+                    <p>Please find your certificate attached.</p>
+                    <p>Certificate ID: ${certificateId}</p>
+                    <p>Date of Issue: ${dateOfIssue}</p>
+                    <p>Best regards,<br>${directorName}</p>
+                `;
+                
+                await mailSender(email, emailSubject, emailText, attachments);
+                console.log(`Certificate sent to ${email}`);
+                emailSent = true;
+            } catch (emailError) {
+                console.error('Error sending email:', emailError);
             }
+        }
+        
+        // Save certificate to database
+        try {
+            const certificateDoc = await Certificate.create({
+                name,
+                certificateId,
+                directorName,
+                dateOfIssue,
+                email,
+                certificatePath,
+                examTitle: certificateData.examTitle || null,
+                score: certificateData.score || null,
+                passed: true, // All generated certificates are for passing students
+                emailSent
+            });
+            console.log('Certificate saved to database');
             
-            res.status(200).json({
+            // Return data for programmatic calls
+            const resultData = {
                 success: true,
-                message: 'Certificate generated successfully',
+                message: "Certificate generated successfully",
                 certificateId,
                 path: certificatePath,
                 emailSent
-            });
-        })
-        .catch(error => {
-            console.error('Error generating certificate:', error);
+            };
+            
+            // Return response for API calls
+            if (res && res.status) {
+                res.status(200).json(resultData);
+            }
+            
+            return resultData;
+        } catch (dbError) {
+            console.error('Error saving to database:', dbError);
+            
+            const errorMsg = 'Failed to save certificate to database';
+            if (res && res.status) {
+                res.status(500).json({
+                    success: false,
+                    error: errorMsg,
+                    details: dbError.message
+                });
+            }
+            
+            throw new Error(`${errorMsg}: ${dbError.message}`);
+        }
+    } catch (error) {
+        console.error('Error in certificate generation:', error);
+        
+        if (res && res.status) {
             res.status(500).json({
                 success: false,
                 error: error.message || 'Failed to generate certificate'
             });
-        });
+        }
         
-    } catch (error) {
-        console.error('Error in certificate generation controller:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Failed to generate certificate'
-        });
+        throw error;
     }
 };
 
@@ -285,7 +338,7 @@ const generateCertificate = (req, res) => {
 const downloadCertificate = (req, res) => {
     try {
         const { certificateId } = req.params;
-        const certPath = path.join(process.cwd(), 'Certificate', `certificate-${certificateId}.pdf`);
+        const certPath = path.join(__dirname, '../tmp', `certificate-${certificateId}.pdf`);
         
         if (!fs.existsSync(certPath)) {
             return res.status(404).json({
