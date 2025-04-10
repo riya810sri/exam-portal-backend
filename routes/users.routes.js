@@ -4,10 +4,6 @@ const { authenticateUser } = require("../middlewares/auth.middleware");
 const { checkRoleAccess } = require("../middlewares/role.middleware");
 const { checkRole } = require("../middlewares/permissions.middleware");
 const userController = require("../controllers/users.controller");
-const authController = require("../controllers/authUsers.controller");
-
-// Public routes (no authentication required)
-router.post("/register", authController.registerUser);
 
 // Get user profile - any authenticated user can access their own profile
 router.get("/profile", authenticateUser, userController.getUserProfile || 

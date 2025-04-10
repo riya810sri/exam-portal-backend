@@ -7,6 +7,8 @@ const authController = require("../controllers/authUsers.controller");
 router.post("/login", authController.loginUser || 
   ((req, res) => res.status(501).json({ message: "Login not implemented yet" })));
   
+router.post("/register", authController.registerUser);
+
 router.post("/forgot-password", authController.forgotPassword || 
   ((req, res) => res.status(501).json({ message: "Forgot password not implemented yet" })));
   

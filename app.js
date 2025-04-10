@@ -1,5 +1,7 @@
 const express = require("express");
+const cors = require("cors"); // Make sure this is installed
 const connectDB = require("./config/dbConnect");
+const config = require("./config/config");
 require("dotenv").config();
 const { transporter } = require("./utils/emailUtils");
 
@@ -14,9 +16,21 @@ const examAttendanceRoutes = require("./routes/examAttendance.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3456;
+
+// CORS configuration using settings from config.js
+app.use(cors({
+  origin: config.cors.origin,
+  methods: config.cors.methods,
+  allowedHeaders: config.cors.allowedHeaders,
+  credentials: true, // Allow cookies to be sent in cross-origin requests
+  maxAge: 86400 // Cache preflight requests for 24 hours
+}));
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/admin", adminRoutes);
@@ -25,15 +39,18 @@ app.use("/api/questions", questionRoutes);
 app.use("/api/roles", roleRoutes);
 app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
-// Connect to MongoDB
+
+// Connect to Database
 connectDB();
 
-// Sample Route
-app.get("/", (req, res) => {
-  res.send("Online Exam Portal Backend is Running!");
-});
-
+// Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`💻 Host: localhost, Port: ${PORT}`);
 });
+
+// Log CORS configuration
+console.log('🔒 CORS Configuration:');
+console.log(`   Origin: ${typeof config.cors.origin === 'object' ? JSON.stringify(config.cors.origin) : config.cors.origin}`);
+console.log(`   Methods: ${config.cors.methods.join(', ')}`);
+console.log(`   Headers: ${config.cors.allowedHeaders}`);
