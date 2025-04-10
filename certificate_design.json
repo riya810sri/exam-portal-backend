@@ -1,0 +1,60 @@
+{
+    "name_section": {
+        "font": "Luminous Script",
+        "text": "(Your Name)",
+        "style": "Regular",
+        "size": 62.01,
+        "colour": "A87A3C",
+        "opacity": "100%",
+        "position": {
+            "x": 355.5,
+            "y": 228.07
+        }
+    },
+    "certificate_id": {
+        "font": "Inconsolata",
+        "size": 20.61,
+        "weight": "Extra Bold",
+        "letter_spacing": "-9%",
+        "colour": "FEFEFF",
+        "opacity": "100%",
+        "position": {
+            "x": 192.69,
+            "y": 479.67
+        },
+        "date_position": {
+            "x": 538.91,
+            "y": 477.61
+        }
+    },
+    "director": {
+        "font": "Kolker Brush",
+        "style": "Regular",
+        "size": 41.82,
+        "colour": "FFFFFF",
+        "position": {
+            "x": 350.65,
+            "y": 497.19
+        }
+    },
+    "tech_supervisor_branch": {
+        "font": "Kaisei Tokumin",
+        "size": 38.97,
+        "letter_spacing": "8%",
+        "angle": 100,
+        "position": {
+            "x": 98.92,
+            "y": 348.29
+        }
+    },
+    "tcvp": {
+        "font": "Inter",
+        "style": "Regular",
+        "size": 16.49,
+        "colour": "FFFFFF",
+        "position": {
+            "x": 379.92,
+            "y": 446.7
+        }
+    }
+}

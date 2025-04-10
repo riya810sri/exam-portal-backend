@@ -6,29 +6,37 @@ const {
   submitAnswer,
   completeExam,
   getExamStatus,
-  getExamResult
+  getExamResult,
+  reviewExamQuestions
 } = require("../controllers/examAttendance.controller");
 const { downloadCertificate } = require("../controllers/certificate.controller");
 
-// All routes require authentication
-router.use(authenticateUser);
+// Fallback function for missing implementations
+const fallback = (methodName) => (req, res) => 
+  res.status(501).json({ message: `${methodName} not implemented yet` });
 
-// Start attending exam
-router.get("/:examId/attend", attendExam);
+// Normal users can attend, submit answers, and complete exams
+router.get("/:examId/attend", authenticateUser, 
+  attendExam ? attendExam : fallback("attendExam"));
+  
+router.post("/:examId/submit-answer", authenticateUser, 
+  submitAnswer ? submitAnswer : fallback("submitAnswer"));
+  
+router.post("/:examId/complete", authenticateUser, 
+  completeExam ? completeExam : fallback("completeExam"));
 
-// Submit answer for current question
-router.post("/:examId/submit-answer", submitAnswer);
+// Normal users can view their exam status, results and review questions
+router.get("/:examId/status", authenticateUser, 
+  getExamStatus ? getExamStatus : fallback("getExamStatus"));
+  
+router.get("/:examId/result", authenticateUser, 
+  getExamResult ? getExamResult : fallback("getExamResult"));
+  
+router.get("/:examId/review", authenticateUser, 
+  reviewExamQuestions ? reviewExamQuestions : fallback("reviewExamQuestions"));
 
-// Complete exam
-router.post("/:examId/complete", completeExam);
-
-// Get exam status and progress
-router.get("/:examId/status", getExamStatus);
-
-// Get exam result
-router.get("/:examId/result", getExamResult);
-
-// Download certificate for completed exam
-router.get("/:examId/certificate", downloadCertificate);
+// Normal users can download their certificates
+router.get("/:examId/certificate", authenticateUser, 
+  downloadCertificate ? downloadCertificate : fallback("downloadCertificate"));
 
 module.exports = router;

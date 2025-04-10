@@ -1,37 +1,68 @@
 const express = require("express");
 const router = express.Router();
-const { createRole } = require("../middlewares/role.middleware");
-const { assignRoleToUser, userHasRole } = require("../middlewares/permissions.middleware");
-const { authenticateUser, verifyAdmin} = require("../middlewares/auth.middleware");
+const { authenticateUser } = require("../middlewares/auth.middleware");
+const { checkRole } = require("../middlewares/permissions.middleware");
+const roleController = require("../controllers/role.controller");
 
-router.post("/createRole", authenticateUser, verifyAdmin, async (req, res) => {
-  const { id, name, description } = req.body;
-  try {
-    await createRole(id, name, description);
-    res.status(201).send("Role created successfully");
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+// Define fallback function
+const fallback = (methodName) => (req, res) => 
+  res.status(501).json({ message: `${methodName} not implemented yet` });
 
-router.post("/assignRole", authenticateUser, verifyAdmin, async (req, res) => {
-  const { userId, roleId } = req.body;
-  try {
-    await assignRoleToUser(userId, roleId);
-    res.status(201).send("Role assigned to user successfully");
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+// According to roleConfig.js, only admins have access to all role endpoints
+// GET /api/role - List all roles
+router.get("/", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.getRoles || fallback("getRoles")
+);
 
-router.get("/hasRole" , authenticateUser, verifyAdmin,  async (req, res) => {
-  const { userId, roleId } = req.body;
-  try {
-    const hasRole = await userHasRole(userId, roleId);
-    res.status(200).json({ hasRole });
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+// GET /api/role/:id - Get a single role
+router.get("/:id", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.getRole || fallback("getRole")
+);
+
+// POST /api/role - Create a new role
+router.post("/", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.createRole || fallback("createRole")
+);
+
+// PUT /api/role/:id - Update a role
+router.put("/:id", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.updateRole || fallback("updateRole")
+);
+
+// DELETE /api/role/:id - Delete a role
+router.delete("/:id", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.deleteRole || fallback("deleteRole")
+);
+
+// POST /api/role/assign - Assign role to user
+router.post("/assign", 
+  authenticateUser, 
+  checkRole("admin"),
+  roleController.assignRole || fallback("assignRole")
+);
+
+// GET /api/role/:roleId/permissions - List permissions by role
+router.get("/:roleId/permissions", 
+  authenticateUser,
+  checkRole("admin"),
+  roleController.getRolePermissions || fallback("getRolePermissions")
+);
+
+// PUT /api/role/:roleId/permissions - Update role permissions
+router.put("/:roleId/permissions", 
+  authenticateUser,
+  checkRole("admin"),
+  roleController.updateRolePermissions || fallback("updateRolePermissions")
+);
 
 module.exports = router;

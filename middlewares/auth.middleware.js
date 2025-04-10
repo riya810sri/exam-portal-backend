@@ -11,23 +11,29 @@ const authenticateUser = async (req, res, next) => {
   }
 
   try {
-    const session = await Session.findById(sessionId);
+    // Use projection to get only necessary fields
+    const session = await Session.findById(sessionId).lean();
     if (!session) {
       return res.status(401).json({ message: "Session invalid or expired" });
     }
 
-    const user = await User.findById(session.userId);
+    // Use projection to get only necessary user fields
+    const user = await User.findById(session.userId).select('_id email isAdmin role username').lean();
     if (!user) {
+      // Clean up the invalid session
+      await Session.findByIdAndDelete(sessionId);
       return res.status(401).json({ message: "User not found" });
     }
 
     req.user = user; // Attach user info to request
+    req.sessionId = sessionId;
     next();
   } catch (error) {
-    res.status(500).json({ message: "Something went wrong", error });
+    res.status(500).json({ message: "Authentication error occurred" });
   }
 };
 
+// Admin check middleware
 const verifyAdmin = (req, res, next) => {
   if (!req.user || !req.user.isAdmin) {
     return res

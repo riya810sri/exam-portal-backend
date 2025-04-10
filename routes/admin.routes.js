@@ -9,17 +9,61 @@ const {
 } = require("../controllers/admin.controller");
 const { updateExam } = require("../controllers/exams.controller");
 const { deleteQuestion } = require("../controllers/questions.controller");
+const { checkRole } = require("../middlewares/permissions.middleware");
+const adminController = require("../controllers/admin.controller");
 
 const router = express.Router();
 
-router.put("/exam/:id", authenticateUser, verifyAdmin, updateExam);
-router.delete("/question/:id", authenticateUser, verifyAdmin, deleteQuestion);
-router.get("/user-results", authenticateUser, verifyAdmin, getUserResults);
+// Define fallback functions for any missing controller methods
+const fallbackFunction = (methodName) => {
+  return (req, res) => {
+    res.status(501).json({
+      message: `Method ${methodName} not implemented yet`,
+      status: "Not Implemented"
+    });
+  };
+};
+
+// Ensure all admin routes require admin role
+router.use(authenticateUser, checkRole("admin"));
+
+// Check if the functions exist before adding routes
+router.put("/exam/:id", typeof updateExam === 'function' ? updateExam : fallbackFunction("updateExam"));
+router.delete("/question/:id", typeof deleteQuestion === 'function' ? deleteQuestion : fallbackFunction("deleteQuestion"));
+router.get("/user-results", typeof getUserResults === 'function' ? getUserResults : fallbackFunction("getUserResults"));
 router.put(
   "/exam-settings/:id",
-  authenticateUser,
-  verifyAdmin,
-  modifyExamSettings
+  typeof modifyExamSettings === 'function' ? modifyExamSettings : fallbackFunction("modifyExamSettings")
+);
+
+// Get dashboard stats
+router.get("/dashboard", 
+  adminController.getDashboardStats || 
+  fallbackFunction("getDashboardStats")
+);
+
+// Get all users
+router.get("/users", 
+  adminController.getAllUsers || 
+  fallbackFunction("getAllUsers")
+);
+
+// Update user status
+router.put("/users/:id/status", 
+  adminController.updateUserStatus || 
+  fallbackFunction("updateUserStatus")
+);
+
+// Delete user
+router.delete("/users/:id", 
+  adminController.deleteUser || 
+  fallbackFunction("deleteUser")
+);
+
+// Get all exams with detailed stats
+router.get("/exams", 
+  adminController.getAllExamsWithStats || 
+  fallbackFunction("getAllExamsWithStats")
 );
 
 module.exports = router;

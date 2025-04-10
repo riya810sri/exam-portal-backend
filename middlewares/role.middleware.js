@@ -1,15 +1,17 @@
-const Role = require("../models/role.model");
+const { authenticateUser } = require('./auth.middleware');
 
-async function createRole(roleId, roleName, description) {
-  const role = new Role({
-    id: roleId,
-    name: roleName,
-    description,
-  });
-
-  await role.save();
-}
+// Middleware to check role access
+const checkRoleAccess = async (req, res, next) => {
+  // If admin, allow access to everything
+  if (req.user && req.user.isAdmin) {
+    return next();
+  }
+  
+  // For normal users, they're allowed to access basic routes
+  // You could customize this further based on specific routes
+  next();
+};
 
 module.exports = {
-  createRole,
+  checkRoleAccess
 };

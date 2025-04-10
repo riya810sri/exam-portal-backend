@@ -37,9 +37,6 @@ const attendExam = async (req, res) => {
       return res.status(404).json({ message: "Exam not found" });
     }
     
-    // Debug - log the exam structure
-    console.log("Exam:", JSON.stringify(exam, null, 2));
-    
     // Check if user has already started the exam
     let attendance = await ExamAttendance.findOne({ examId, userId });
 
@@ -153,7 +150,6 @@ const attendExam = async (req, res) => {
     res.status(200).json(responseData);
 
   } catch (error) {
-    console.error("Error in attendExam:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message,
@@ -199,7 +195,6 @@ const submitAnswer = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in submitAnswer:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 
@@ -320,13 +315,9 @@ const completeExam = async (req, res) => {
           passed: true
         });
 
-        console.log("Certificate generated successfully:", certificateInfo?.certificateId || "Unknown ID");
       } catch (certError) {
-        console.error("Failed to generate certificate:", certError.message);
         // Continue execution - don't fail the exam completion if certificate fails
       }
-    } else {
-      console.log(`No certificate generated for user ${user.username} - failed with ${percentage.toFixed(2)}%`);
     }
 
     res.status(200).json({
@@ -341,7 +332,6 @@ const completeExam = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in completeExam:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 
@@ -376,7 +366,6 @@ const getExamStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in getExamStatus:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 
@@ -420,7 +409,6 @@ const getExamResult = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in getExamResult:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 

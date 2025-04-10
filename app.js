@@ -13,7 +13,7 @@ const certificateRoutes = require("./routes/certificate.routes");
 const examAttendanceRoutes = require("./routes/examAttendance.routes");
 
 const app = express();
-port = process.env.port || 8000;
+const PORT = process.env.PORT || 3456;
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -30,7 +30,10 @@ connectDB();
 
 // Sample Route
 app.get("/", (req, res) => {
-  res.send("Online Exam Portal Backend is Running 🚀")});
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}/`);
+  res.send("Online Exam Portal Backend is Running!");
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`💻 Host: localhost, Port: ${PORT}`);
 });

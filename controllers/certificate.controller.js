@@ -20,14 +20,11 @@ class CertificateGenerator {
             
             // Get the actual font name from fontkit
             const fontName = font.familyName;
-            console.log(`Font family name: ${fontName}`);
             
             // Now register with the correct name
             this.doc.registerFont('CustomFont', fontPath);
             this.fontRegistered = true;
-            console.log('Custom font registered successfully');
         } catch (error) {
-            console.error(`Error loading font with fontkit: ${error.message}`);
             this.fontRegistered = false;
         }
     }
@@ -164,7 +161,6 @@ class CertificateGenerator {
                 this.doc.end();
                 
                 writeStream.on('finish', async () => {
-                    console.log(`Certificate generated: ${outputPath}`);
                     resolve(outputPath);
                 });
                 
@@ -172,7 +168,6 @@ class CertificateGenerator {
             });
 
         } catch (error) {
-            console.error('Error generating certificate:', error);
             throw error;
         }
     }
@@ -182,7 +177,6 @@ class CertificateGenerator {
         const certDir = path.join(__dirname, '../tmp');
         if (!fs.existsSync(certDir)) {
             fs.mkdirSync(certDir);
-            console.log('tmp directory created');
         }
         return certDir;
     }
@@ -232,8 +226,6 @@ const generateCertificate = async (data, res) => {
             throw new Error(errorMsg);
         }
         
-        console.log(`Generating certificate for ${name}, ID: ${certificateId}`);
-        
         // Generate certificate
         const certificatePath = await generator.generateCertificate({
             name,
@@ -268,10 +260,8 @@ const generateCertificate = async (data, res) => {
                 `;
                 
                 await mailSender(email, emailSubject, emailText, attachments);
-                console.log(`Certificate sent to ${email}`);
                 emailSent = true;
             } catch (emailError) {
-                console.error('Error sending email:', emailError);
             }
         }
         
@@ -289,7 +279,6 @@ const generateCertificate = async (data, res) => {
                 passed: true, // All generated certificates are for passing students
                 emailSent
             });
-            console.log('Certificate saved to database');
             
             // Return data for programmatic calls
             const resultData = {
@@ -307,8 +296,6 @@ const generateCertificate = async (data, res) => {
             
             return resultData;
         } catch (dbError) {
-            console.error('Error saving to database:', dbError);
-            
             const errorMsg = 'Failed to save certificate to database';
             if (res && res.status) {
                 res.status(500).json({
@@ -321,8 +308,6 @@ const generateCertificate = async (data, res) => {
             throw new Error(`${errorMsg}: ${dbError.message}`);
         }
     } catch (error) {
-        console.error('Error in certificate generation:', error);
-        
         if (res && res.status) {
             res.status(500).json({
                 success: false,

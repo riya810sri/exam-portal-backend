@@ -1,14 +1,33 @@
 const express = require("express");
-const {
-  addQuestion,
-  getQuestionsByExam,
-  deleteQuestion,
-} = require("../controllers/questions.controller");
-
 const router = express.Router();
+const { authenticateUser } = require("../middlewares/auth.middleware");
+const { checkRoleAccess } = require("../middlewares/role.middleware");
+const { checkRole } = require("../middlewares/permissions.middleware");
+const questionsController = require("../controllers/questions.controller");
 
-router.post("/", addQuestion); // Add a question
-router.get("/:examId", getQuestionsByExam); // Get all questions for an exam
-router.delete("/:id", deleteQuestion); // Delete a question
+// Check if controller methods exist and provide fallbacks if they don't
+const getAllQuestions = questionsController.getAllQuestions || 
+  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+
+const getQuestionById = questionsController.getQuestionById || 
+  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+
+const createQuestion = questionsController.createQuestion || 
+  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+
+const updateQuestion = questionsController.updateQuestion || 
+  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+
+const deleteQuestion = questionsController.deleteQuestion || 
+  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+
+// All users can view questions
+router.get("/", authenticateUser, getAllQuestions);
+router.get("/:id", authenticateUser, getQuestionById);
+
+// Only admin can create, update, delete questions
+router.post("/", authenticateUser, checkRole("admin"), createQuestion);
+router.put("/:id", authenticateUser, checkRole("admin"), updateQuestion);
+router.delete("/:id", authenticateUser, checkRole("admin"), deleteQuestion);
 
 module.exports = router;

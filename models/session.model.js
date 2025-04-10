@@ -5,6 +5,11 @@ const sessionSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User' // Reference the User model
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now,
+        expires: 86400 // automatically delete after 24 hours (in seconds)
     }
 });
 
