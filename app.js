@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors"); // Make sure this is installed
-const connectDB = require("./config/dbConnect");
+const db = require('./config/db'); // Ensure this is the correct path to your db.js file
 const config = require("./config/config");
 require("dotenv").config();
 const { transporter } = require("./utils/emailUtils");
@@ -41,7 +41,7 @@ app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
 
 // Connect to Database
-connectDB();
+
 
 // Start server
 app.listen(PORT, () => {
