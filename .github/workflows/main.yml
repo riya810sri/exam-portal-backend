@@ -22,19 +22,25 @@ jobs:
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
-          ENV_BASE64: ${{ secrets.ENV_BASE64 }}
+          ENV: ${{ secrets.ENV }}
           ENV_FILE: ${{ secrets.ENV_FILE }}
+        shell: bash
         run: |
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # Clean and prepare remote directory
+          # Clean remote dir
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
 
-          # Deploy files
+          # Copy project
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # Decode ENV_BASE64 and write to file on server
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "echo '${ENV_BASE64}' | base64 -d > ${DEPLOY_DIR}/${ENV_FILE}"
+          # Upload .env via heredoc over ssh
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} 'bash -s' <<EOF
+cat <<EOT > ${DEPLOY_DIR}/${ENV_FILE}
+${ENV}
+EOT
+EOF
 
+          # Clean private key
           rm private_key.pem
