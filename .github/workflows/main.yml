@@ -65,7 +65,7 @@ jobs:
           
           # Make script executable and execute it remotely
           chmod +x deploy_script.sh
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST 'bash -s' < deploy_script.sh
+          ssh -i private_key.pem -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST 'bash -s' < deploy_script.sh
           
           # 5. Cleanup
           rm private_key.pem local_env_file.env
