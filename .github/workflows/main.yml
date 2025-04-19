@@ -1,0 +1,45 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        
+      - name: Remove Git
+        run: rm -rf .git/
+        
+      - name: Create .env file
+        run: echo -e "${{ secrets.ENV }}" > ${{ secrets.ENV_FILE }}
+
+      - name: Clean up and Deploy using SFTP
+        env:
+          DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
+          DEV_HOST: ${{ secrets.DEV_HOST }}
+          DEV_USER: ${{ secrets.DEV_USER }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          # Save the private key securely
+          echo "${DEV_SFTP_PRIVATE_KEY}" > private_key.pem
+          chmod 600 private_key.pem
+          # Clean up old files on the server
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
+          echo "Cleaning up old files in ${DEPLOY_DIR}..."
+          rm -rvf ${DEPLOY_DIR}/*
+          EOF
+          # Upload new files
+          sftp -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
+          put -r ./* ${DEPLOY_DIR}/
+          bye
+          EOF
+          # Cleanup local private key file
+          rm private_key.pem
+        shell: bash
