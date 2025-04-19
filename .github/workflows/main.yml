@@ -3,7 +3,7 @@ name: Backend Deploy
 on:
   push:
     branches:
-      - main  # ya dev
+      - main
 
 jobs:
   deploy:
@@ -13,27 +13,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Clean and Deploy backend
+      - name: Deploy backend via SSH + SCP
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           ENV: ${{ secrets.ENV }}
-          ENV_FILE: ${{ secrets.ENV_FILE }}  # example: config/.env
+          ENV_FILE: ${{ secrets.ENV_FILE }} # example: config/.env
         shell: bash
         run: |
+          # 1. Write private key
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # 1. Clean old files
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
+          # 2. Save ENV content as temp file (multiline support)
+          echo "$ENV" > local_env_file.env
 
-          # 2. Copy backend files
+          # 3. Clean remote dir
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
+
+          # 4. Copy files and env
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
+          scp -i private_key.pem -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
 
-          # 3. Write multiline ENV safely using printf
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE}) && printf '%b\n' \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
-
-          # 4. Clean up
-          rm private_key.pem
+          # 5. Cleanup
+          rm private_key.pem local_env_file.env
