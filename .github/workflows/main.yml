@@ -1,39 +1,40 @@
-name: Build and Deploy
+name: Backend Deploy
 
 on:
   push:
     branches:
-      - main
+      - main  # or dev
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Remove Git folder
-        run: rm -rf .git/
-
-      - name: Clean up and Deploy using SCP
+      - name: Clean up and Deploy
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           ENV: ${{ secrets.ENV }}
-          ENV_FILE: ${{ secrets.ENV_FILE }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}  # like config/.env
         shell: bash
         run: |
+          # Save private key
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
+          # 1. Delete old files from server
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
 
+          # 2. Copy project files to server
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # Create .env remotely using printf
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "printf '%s\n' \"$ENV\" > '${DEPLOY_DIR}/${ENV_FILE}'"
+          # 3. Create .env file on server (resolves newline issues)
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE}) && printf '%s\n' \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
 
+          # 4. Clean local private key
           rm private_key.pem
