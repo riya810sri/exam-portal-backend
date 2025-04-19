@@ -39,3 +39,24 @@ jobs:
 
           # 5. Cleanup
           rm private_key.pem local_env_file.env
+
+      - name: Install dependencies & fix vulnerabilities
+        run: |
+          # Install dependencies
+          ${{ secrets.NPM_BASE_COMMAND }} install
+          
+          # Fix vulnerabilities
+          ${{ secrets.NPM_BASE_COMMAND }} audit fix --force
+
+      - name: Set environment variables
+        run: |
+          export NODE_ENV=production
+
+      - name: Start or restart application with PM2
+        run: |
+          # Check if the app is already running via PM2
+          if ! pm2 show ${{ secrets.APP_NAME }}; then
+            pm2 start ${{ secrets.START_FILE_PATH }} --name "${{ secrets.APP_NAME }}"
+          else
+            pm2 restart -f ${{ secrets.APP_NAME }}
+          fi
