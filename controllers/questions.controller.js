@@ -81,4 +81,23 @@ const deleteQuestion = async (req, res) => {
   }
 };
 
-module.exports = { addQuestion, getQuestionsByExam, deleteQuestion };
+const getQuestionById = async (req, res) => {
+  try {
+    const question = await Question.findById(req.params.id);
+    
+    if (!question) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+    
+    res.status(200).json(question);
+  } catch (error) {
+    res.status(500).json({ error: "Internal Server Error", details: error.message });
+  }
+};
+
+module.exports = { 
+  addQuestion, 
+  getQuestionsByExam, 
+  deleteQuestion,
+  getQuestionById
+};
