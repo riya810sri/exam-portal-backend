@@ -29,19 +29,13 @@ jobs:
           chmod 600 private_key.pem
 
           # Clean and prepare remote directory
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
-          echo "Cleaning up ${DEPLOY_DIR} on server..."
-          rm -rf ${DEPLOY_DIR}/*
-          mkdir -p ${DEPLOY_DIR}
-          EOF
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
 
-          # Deploy files to server
+          # Deploy files
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # Create .env on remote server
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
-          echo -e "${ENV}" > ${DEPLOY_DIR}/${ENV_FILE}
-          EOF
+          # Create .env remotely by passing ENV as string directly
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "echo -e \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
 
-          # Cleanup
           rm private_key.pem
+
