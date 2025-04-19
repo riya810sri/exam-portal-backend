@@ -1,62 +1,49 @@
 name: Backend Deploy
-
 on:
   push:
     branches:
       - main
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Deploy backend via SSH + SCP
+      - name: Remote install, env setup, and PM2 deploy via SSH
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           ENV: ${{ secrets.ENV }}
-          ENV_FILE: ${{ secrets.ENV_FILE }} # example: config/.env
-        shell: bash
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          START_FILE_PATH: ${{ secrets.START_FILE_PATH }}
+          NPM_BASE_COMMAND: ${{ secrets.NPM_BASE_COMMAND }}
+          PM2_BASE_COMMAND: ${{ secrets.PM2_BASE_COMMAND }}
         run: |
-          # 1. Write private key
-          echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-
-          # 2. Save ENV content as temp file (multiline support)
-          echo "$ENV" > local_env_file.env
-
-          # 3. Clean remote dir
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
-
-          # 4. Copy files and env
-          scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
-          scp -i private_key.pem -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
-
-          # 5. Cleanup
-          rm private_key.pem local_env_file.env
-
-      - name: Install dependencies & fix vulnerabilities
-        run: |
-          # Install dependencies
-          ${{ secrets.NPM_BASE_COMMAND }} install
+          # Write SSH key
+          mkdir -p ~/.ssh
+          echo "$DEV_SFTP_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           
-          # Fix vulnerabilities
-          ${{ secrets.NPM_BASE_COMMAND }} audit fix --force
-
-      - name: Set environment variables
-        run: |
+          # Create a script to run on the remote server
+          cat > deploy_script.sh << EOF
+          cd $DEPLOY_DIR
+          $NPM_BASE_COMMAND install
+          $NPM_BASE_COMMAND audit fix --force
+          echo "$ENV" > $ENV_FILE
           export NODE_ENV=production
-
-      - name: Start or restart application with PM2
-        run: |
-          # Check if the app is already running via PM2
-          if ! pm2 show ${{ secrets.APP_NAME }}; then
-            pm2 start ${{ secrets.START_FILE_PATH }} --name "${{ secrets.APP_NAME }}"
+          if ! $PM2_BASE_COMMAND list | grep -q "$APP_NAME"; then
+            $PM2_BASE_COMMAND start $START_FILE_PATH --name "$APP_NAME"
           else
-            pm2 restart -f ${{ secrets.APP_NAME }}
+            $PM2_BASE_COMMAND restart -f "$APP_NAME"
           fi
+          EOF
+          
+          # Execute the script remotely
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST 'bash -s' < deploy_script.sh
+          
+          # Clean up
+          rm ~/.ssh/id_rsa
+          rm deploy_script.sh
