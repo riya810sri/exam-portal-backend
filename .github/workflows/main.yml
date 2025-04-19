@@ -1,15 +1,19 @@
 name: Backend Deploy
+
 on:
   push:
     branches:
       - main
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Remote install, env setup, and PM2 deploy via SSH
+
+      - name: Deploy backend via SSH + SCP
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
@@ -21,61 +25,47 @@ jobs:
           START_FILE_PATH: ${{ secrets.START_FILE_PATH }}
           NPM_BASE_COMMAND: ${{ secrets.NPM_BASE_COMMAND }}
           PM2_BASE_COMMAND: ${{ secrets.PM2_BASE_COMMAND }}
+        shell: bash
         run: |
-          # Write SSH key
-          mkdir -p ~/.ssh
-          echo "$DEV_SFTP_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
+          # 1. Write private key
+          echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          # 2. Save ENV content as temp file (multiline support)
           echo "$ENV" > local_env_file.env
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
-          
-          # Create a script to run on the remote server
+          # 3. Clean remote dir
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
+          # 4. Copy files and env
+          scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
+          scp -i private_key.pem -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
+
+          # 
           cat > deploy_script.sh << EOF
-          #!/bin/bash
-          set -e  # Exit on error
           cd $DEPLOY_DIR
-          
-          # Install dependencies
           $NPM_BASE_COMMAND install
           $NPM_BASE_COMMAND audit fix --force
           
-          # Update vulnerable packages
+          # Run npm update to resolve dependency vulnerabilities
           $NPM_BASE_COMMAND update semver simple-update-notifier nodemon --depth 5
           
           export NODE_ENV=production
-          
-          # Install PM2 globally if not found
-          if ! which pm2 > /dev/null; then
+          if ! command -v $PM2_BASE_COMMAND &> /dev/null; then
             echo "PM2 not found, installing globally..."
             $NPM_BASE_COMMAND install -g pm2
-            export PATH="\$PATH:\$(npm bin -g)"
           fi
           
-          PM2_PATH="\$(which pm2 || echo '/usr/local/bin/pm2')"
-          echo "Using PM2 at: \$PM2_PATH"
-          
-          # Check if app is already running in PM2
-          if \$PM2_PATH list | grep -q "$APP_NAME"; then
+          if $PM2_BASE_COMMAND status | grep -q "$APP_NAME"; then
             echo "Restarting existing PM2 process..."
-            \$PM2_PATH restart "$APP_NAME"
+            $PM2_BASE_COMMAND restart "$APP_NAME"
           else
             echo "Starting new PM2 process..."
-            \$PM2_PATH start $START_FILE_PATH --name "$APP_NAME"
+            $PM2_BASE_COMMAND start $START_FILE_PATH --name "$APP_NAME"
           fi
-          
-          # Save PM2 configuration
-          \$PM2_PATH save
-          
-          echo "Deployment completed successfully"
+          $PM2_BASE_COMMAND save
           EOF
           
           # Make script executable and execute it remotely
           chmod +x deploy_script.sh
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST 'bash -s' < deploy_script.sh
           
-          # Clean up
-          rm ~/.ssh/id_rsa
-          rm deploy_script.sh
+          # 5. Cleanup
+          rm private_key.pem local_env_file.env
