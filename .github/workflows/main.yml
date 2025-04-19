@@ -12,34 +12,33 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-        
-      - name: Remove Git
-        run: rm -rf .git/
-        
-      - name: Create .env file
-        run: echo -e "${{ secrets.ENV }}" > ${{ secrets.ENV_FILE }}
 
-      - name: Clean up and Deploy using SFTP
+      - name: Remove Git folder
+        run: rm -rf .git/
+
+      - name: Create .env file
+        run: echo "${{ secrets.ENV }}" > .env
+
+      - name: Clean up and Deploy using SCP
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
-          ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
           # Save the private key securely
-          echo "${DEV_SFTP_PRIVATE_KEY}" > private_key.pem
+          echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
+
           # Clean up old files on the server
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
-          echo "Cleaning up old files in ${DEPLOY_DIR}..."
-          rm -rvf ${DEPLOY_DIR}/*
+          echo "Cleaning up ${DEPLOY_DIR} on server..."
+          rm -rf ${DEPLOY_DIR}/*
+          mkdir -p ${DEPLOY_DIR}
           EOF
-          # Upload new files
-          sftp -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
-          put -r ./* ${DEPLOY_DIR}/
-          bye
-          EOF
-          # Cleanup local private key file
+
+          # Deploy all files using SCP
+          scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
+
+          # Cleanup
           rm private_key.pem
-        shell: bash
