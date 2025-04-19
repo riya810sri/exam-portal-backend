@@ -26,13 +26,19 @@ jobs:
           mkdir -p ~/.ssh
           echo "$DEV_SFTP_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+
+          
+          echo "$ENV" > local_env_file.env
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
+
           
           # Create a script to run on the remote server
           cat > deploy_script.sh << EOF
           cd $DEPLOY_DIR
           $NPM_BASE_COMMAND install
           $NPM_BASE_COMMAND audit fix --force
-          echo "$ENV" > $ENV_FILE
           export NODE_ENV=production
           if ! $PM2_BASE_COMMAND list | grep -q "$APP_NAME"; then
             $PM2_BASE_COMMAND start $START_FILE_PATH --name "$APP_NAME"
