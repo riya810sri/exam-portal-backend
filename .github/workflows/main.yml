@@ -29,18 +29,11 @@ jobs:
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # Clean remote dir
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
 
-          # Copy project
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # Upload .env via heredoc over ssh
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} 'bash -s' <<EOF
-cat <<EOT > ${DEPLOY_DIR}/${ENV_FILE}
-${ENV}
-EOT
-EOF
+          # Create .env remotely using printf
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "printf '%s\n' \"$ENV\" > '${DEPLOY_DIR}/${ENV_FILE}'"
 
-          # Clean private key
           rm private_key.pem
