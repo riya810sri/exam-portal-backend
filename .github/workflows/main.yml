@@ -22,7 +22,7 @@ jobs:
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
-          ENV: ${{ secrets.ENV }}
+          ENV_BASE64: ${{ secrets.ENV_BASE64 }}
           ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
@@ -34,8 +34,7 @@ jobs:
           # Deploy files
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # Create .env remotely by passing ENV as string directly
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "echo -e \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
+          # Decode ENV_BASE64 and write to file on server
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "echo '${ENV_BASE64}' | base64 -d > ${DEPLOY_DIR}/${ENV_FILE}"
 
           rm private_key.pem
-
