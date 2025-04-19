@@ -34,27 +34,42 @@ jobs:
           
           # Create a script to run on the remote server
           cat > deploy_script.sh << EOF
+          #!/bin/bash
+          set -e  # Exit on error
           cd $DEPLOY_DIR
+          
+          # Install dependencies
           $NPM_BASE_COMMAND install
           $NPM_BASE_COMMAND audit fix --force
           
-          # Run npm update to resolve dependency vulnerabilities
+          # Update vulnerable packages
           $NPM_BASE_COMMAND update semver simple-update-notifier nodemon --depth 5
           
           export NODE_ENV=production
-          if ! command -v $PM2_BASE_COMMAND &> /dev/null; then
+          
+          # Install PM2 globally if not found
+          if ! which pm2 > /dev/null; then
             echo "PM2 not found, installing globally..."
             $NPM_BASE_COMMAND install -g pm2
+            export PATH="\$PATH:\$(npm bin -g)"
           fi
           
-          if $PM2_BASE_COMMAND status | grep -q "$APP_NAME"; then
+          PM2_PATH="\$(which pm2 || echo '/usr/local/bin/pm2')"
+          echo "Using PM2 at: \$PM2_PATH"
+          
+          # Check if app is already running in PM2
+          if \$PM2_PATH list | grep -q "$APP_NAME"; then
             echo "Restarting existing PM2 process..."
-            $PM2_BASE_COMMAND restart "$APP_NAME"
+            \$PM2_PATH restart "$APP_NAME"
           else
             echo "Starting new PM2 process..."
-            $PM2_BASE_COMMAND start $START_FILE_PATH --name "$APP_NAME"
+            \$PM2_PATH start $START_FILE_PATH --name "$APP_NAME"
           fi
-          $PM2_BASE_COMMAND save
+          
+          # Save PM2 configuration
+          \$PM2_PATH save
+          
+          echo "Deployment completed successfully"
           EOF
           
           # Make script executable and execute it remotely
