@@ -16,27 +16,32 @@ jobs:
       - name: Remove Git folder
         run: rm -rf .git/
 
-      - name: Create .env file
-        run: echo "${{ secrets.ENV }}" > ${{ secrets.ENV_FILE }}
-
       - name: Clean up and Deploy using SCP
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          ENV: ${{ secrets.ENV }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
-          # Save the private key securely
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          # Clean up old files on the server
+
+          # Clean and prepare remote directory
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
           echo "Cleaning up ${DEPLOY_DIR} on server..."
           rm -rf ${DEPLOY_DIR}/*
           mkdir -p ${DEPLOY_DIR}
           EOF
-          # Deploy all files using SCP
+
+          # Deploy files to server
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
-          # scp -i private_key.pem -o StrictHostKeyChecking=no -r ${{ secrets.ENV_FILE }} ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${{ secrets.ENV_FILE }}
+
+          # Create .env on remote server
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
+          echo -e "${ENV}" > ${DEPLOY_DIR}/${ENV_FILE}
+          EOF
+
           # Cleanup
           rm private_key.pem
