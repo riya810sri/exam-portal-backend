@@ -3,7 +3,7 @@ name: Backend Deploy
 on:
   push:
     branches:
-      - main  # or dev
+      - main  # ya dev
 
 jobs:
   deploy:
@@ -13,28 +13,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Clean up and Deploy
+      - name: Clean and Deploy backend
         env:
           DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
           DEV_HOST: ${{ secrets.DEV_HOST }}
           DEV_USER: ${{ secrets.DEV_USER }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           ENV: ${{ secrets.ENV }}
-          ENV_FILE: ${{ secrets.ENV_FILE }}  # like config/.env
+          ENV_FILE: ${{ secrets.ENV_FILE }}  # example: config/.env
         shell: bash
         run: |
-          # Save private key
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # 1. Delete old files from server
+          # 1. Clean old files
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR}"
 
-          # 2. Copy project files to server
+          # 2. Copy backend files
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
 
-          # 3. Create .env file on server (resolves newline issues)
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE}) && printf '%s\n' \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
+          # 3. Write multiline ENV safely using printf
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE}) && printf '%b\n' \"$ENV\" > ${DEPLOY_DIR}/${ENV_FILE}"
 
-          # 4. Clean local private key
+          # 4. Clean up
           rm private_key.pem
