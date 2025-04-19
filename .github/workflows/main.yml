@@ -17,7 +17,7 @@ jobs:
         run: rm -rf .git/
 
       - name: Create .env file
-        run: echo "${{ secrets.ENV }}" > .env
+        run: echo -e "${{ secrets.ENV }}" > ${{ secrets.ENV_FILE }}
 
       - name: Clean up and Deploy using SCP
         env:
@@ -29,16 +29,13 @@ jobs:
           # Save the private key securely
           echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-
           # Clean up old files on the server
           ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} << EOF
           echo "Cleaning up ${DEPLOY_DIR} on server..."
           rm -rf ${DEPLOY_DIR}/*
           mkdir -p ${DEPLOY_DIR}
           EOF
-
           # Deploy all files using SCP
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
-
           # Cleanup
           rm private_key.pem
