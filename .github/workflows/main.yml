@@ -53,14 +53,14 @@ jobs:
             $NPM_BASE_COMMAND install -g pm2
           fi
           
-          if $PM2_BASE_COMMAND status | grep -q "$APP_NAME"; then
+          if pm2 status | grep -q "$APP_NAME"; then
             echo "Restarting existing PM2 process..."
-            $PM2_BASE_COMMAND restart "$APP_NAME"
+            pm2 restart "$APP_NAME"
           else
             echo "Starting new PM2 process..."
-            $PM2_BASE_COMMAND start $START_FILE_PATH --name "$APP_NAME"
+            pm2 start $START_FILE_PATH --name "$APP_NAME"
           fi
-          $PM2_BASE_COMMAND save
+          pm2 save
           EOF
           
           # Make script executable and execute it remotely
