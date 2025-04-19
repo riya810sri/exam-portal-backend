@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Remove Git folder
         run: rm -rf .git/
@@ -37,5 +37,6 @@ jobs:
           EOF
           # Deploy all files using SCP
           scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
+          scp -i private_key.pem -o StrictHostKeyChecking=no -r ${{ secrets.ENV_FILE }} ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${{ secrets.ENV_FILE }}
           # Cleanup
           rm private_key.pem
