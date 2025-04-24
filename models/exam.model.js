@@ -12,6 +12,11 @@ const examSchema = new mongoose.Schema({
     type: Number, 
     required: true,
   },
+  status: {
+    type: String,
+    enum: ["PENDING", "APPROVED", "PUBLISHED"],
+    default: "PENDING",
+  },
   sections: {
     mcqs: [
       {
@@ -35,6 +40,16 @@ const examSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+  },
+  approvedAt: {
+    type: Date,
+  },
+  publishedAt: {
+    type: Date,
+  }
 });
 
 const Exam = mongoose.model("Exam", examSchema);

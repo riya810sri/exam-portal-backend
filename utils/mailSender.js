@@ -43,7 +43,7 @@ const mailSender = async (email, subject, html, attachments) => {
 };
 
 /**
- * Sends a certificate email
+ * Sends a certificate email with retry functionality
  * @param {Object} params - Parameters for the email
  * @param {string} params.email - Recipient email address
  * @param {string} params.subject - Email subject
@@ -52,9 +52,10 @@ const mailSender = async (email, subject, html, attachments) => {
  * @param {string} params.examTitle - Exam title
  * @param {boolean} params.passed - Exam pass status
  * @param {string} params.certificatePath - Path to the certificate file
+ * @param {number} retryCount - Number of retry attempts
  * @returns {Promise<boolean>} - Success status
  */
-const sendCertificateEmail = async ({ email, subject, name, certificateId, examTitle, passed, certificatePath }) => {
+const sendCertificateEmail = async ({ email, subject, name, certificateId, examTitle, passed, certificatePath }, retryCount = 3) => {
   try {
     console.log(`Sending email with certificate attachment to ${email}`);
     
@@ -97,7 +98,14 @@ const sendCertificateEmail = async ({ email, subject, name, certificateId, examT
     console.log(`Email sent: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error("Error sending certificate email:", error);
+    console.error(`Error sending certificate email (attempt ${4-retryCount}/3):`, error);
+    
+    // Implement retries
+    if (retryCount > 1) {
+      console.log(`Retrying email send to ${email}... (${retryCount-1} attempts remaining)`);
+      return sendCertificateEmail({ email, subject, name, certificateId, examTitle, passed, certificatePath }, retryCount - 1);
+    }
+    
     return false;
   }
 };

@@ -7,13 +7,18 @@ const {
   completeExam,
   getExamStatus,
   getExamResult,
-  reviewExamQuestions
+  reviewExamQuestions,
+  getUserExams
 } = require("../controllers/examAttendance.controller");
 const { downloadCertificate } = require("../controllers/certificate.controller");
 
 // Fallback function for missing implementations
 const fallback = (methodName) => (req, res) => 
   res.status(501).json({ message: `${methodName} not implemented yet` });
+
+// Get user's exam history
+router.get("/my-exams", authenticateUser, 
+  getUserExams ? getUserExams : fallback("getUserExams"));
 
 // Normal users can attend, submit answers, and complete exams
 router.get("/:examId/attend", authenticateUser, 

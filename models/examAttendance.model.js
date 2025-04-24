@@ -53,11 +53,15 @@ const examAttendanceSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  attemptNumber: {
+    type: Number,
+    default: 1
+  }
 });
 
-// Index for faster queries
-examAttendanceSchema.index({ examId: 1, userId: 1 }, { unique: true });
+// Index for faster queries but non-unique to allow multiple attempts
+examAttendanceSchema.index({ examId: 1, userId: 1, attemptNumber: 1 });
 
 const ExamAttendance = mongoose.model("ExamAttendance", examAttendanceSchema);
 
-module.exports = ExamAttendance; 
+module.exports = ExamAttendance;

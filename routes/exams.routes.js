@@ -9,11 +9,15 @@ const examController = require("../controllers/exams.controller");
 const fallback = (methodName) => (req, res) => 
   res.status(501).json({ message: `${methodName} not implemented yet` });
 
-// All authenticated users can view exams
+// All authenticated users can view published exams only
 router.get("/", authenticateUser, 
   examController.getAllExams ? examController.getAllExams : fallback("getAllExams"));
 
-// All authenticated users can view a single exam
+// Only admin users can view pending exams
+router.get("/pending", authenticateUser, checkRole("admin"), 
+  examController.getPendingExams ? examController.getPendingExams : fallback("getPendingExams"));
+
+// All authenticated users can view a single exam (but only published ones for non-admins)
 router.get("/:id", authenticateUser, 
   examController.getExamById ? examController.getExamById : fallback("getExamById"));
 
@@ -26,5 +30,12 @@ router.put("/:id", authenticateUser, checkRole("admin"),
   
 router.delete("/:id", authenticateUser, checkRole("admin"), 
   examController.deleteExam ? examController.deleteExam : fallback("deleteExam"));
+
+// Admin approval and publishing endpoints
+router.patch("/:id/approve", authenticateUser, checkRole("admin"), 
+  examController.approveExam ? examController.approveExam : fallback("approveExam"));
+
+router.patch("/:id/publish", authenticateUser, checkRole("admin"), 
+  examController.publishExam ? examController.publishExam : fallback("publishExam"));
 
 module.exports = router;

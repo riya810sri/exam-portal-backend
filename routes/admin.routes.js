@@ -6,6 +6,10 @@ const {
 const {
   getUserResults,
   modifyExamSettings,
+  getAllExamHistory,
+  getUserExamHistory,
+  manageMachines,
+  getExamPassFailStats
 } = require("../controllers/admin.controller");
 const { updateExam } = require("../controllers/exams.controller");
 const { deleteQuestion } = require("../controllers/questions.controller");
@@ -65,5 +69,20 @@ router.get("/exams",
   adminController.getAllExamsWithStats || 
   fallbackFunction("getAllExamsWithStats")
 );
+
+// Exam history routes
+router.get("/exam-history", 
+  typeof getAllExamHistory === 'function' ? getAllExamHistory : fallbackFunction("getAllExamHistory"));
+
+router.get("/exam-history/user/:userId", 
+  typeof getUserExamHistory === 'function' ? getUserExamHistory : fallbackFunction("getUserExamHistory"));
+
+// Get pass/fail statistics for a specific exam
+router.get("/exam/:examId/stats", 
+  typeof getExamPassFailStats === 'function' ? getExamPassFailStats : fallbackFunction("getExamPassFailStats"));
+
+// Virtual machine management
+router.post("/machines", 
+  typeof manageMachines === 'function' ? manageMachines : fallbackFunction("manageMachines"));
 
 module.exports = router;

@@ -25,13 +25,14 @@ class CertificateGenerator {
             this.doc.registerFont('CustomFont', fontPath);
             this.fontRegistered = true;
         } catch (error) {
+            console.log("Font registration error:", error.message);
             this.fontRegistered = false;
         }
     }
 
     async generateCertificate(data) {
         try {
-            const { name, certificateId, directorName, dateOfIssue, email } = data;
+            const { name, certificateId, directorName, dateOfIssue, email, examTitle, score } = data;
             
             // Validate input data
             if (!name || !certificateId || !directorName || !dateOfIssue) {
@@ -41,12 +42,161 @@ class CertificateGenerator {
             // Ensure Certificate directory exists
             const certDir = this.ensureCertificateDir();
 
-            // Load template image
-            const imagePath = path.join(__dirname, '../tmp/techonquer-cert.jpeg');
-            if (!fs.existsSync(imagePath)) {
-                throw new Error('Certificate template not found');
+            // Try different paths for template image
+            const possiblePaths = [
+                path.join(__dirname, '../tmp/techonquer-cert.jpeg'),
+                path.join(__dirname, '../tmp/techonquer-cert.jpg'),
+                path.join(__dirname, '../tmp/certificate-template.jpeg'),
+                path.join(__dirname, '../tmp/certificate-template.jpg'),
+                path.join(__dirname, '../certificate_design.json')
+            ];
+            
+            let imagePath = null;
+            for (const p of possiblePaths) {
+                if (fs.existsSync(p)) {
+                    imagePath = p;
+                    break;
+                }
             }
 
+            // If no template found, create a simple certificate design directly in PDF
+            if (!imagePath) {
+                console.log("No certificate template found, creating basic certificate");
+                
+                // Set page size for a standard certificate
+                this.doc.addPage({
+                    size: [842, 595], // A4 landscape
+                    margin: 50
+                });
+                
+                // Add border
+                this.doc
+                    .rect(20, 20, 802, 555)
+                    .lineWidth(3)
+                    .stroke('#1B3C73');
+                
+                // Add title
+                this.doc
+                    .font('Helvetica-Bold')
+                    .fontSize(40)
+                    .fillColor('#1B3C73')
+                    .text('CERTIFICATE OF ACHIEVEMENT', {
+                        align: 'center'
+                    })
+                    .moveDown(0.5);
+                
+                // Add organization name
+                this.doc
+                    .font('Helvetica')
+                    .fontSize(20)
+                    .text('TechOnquer Education', {
+                        align: 'center'
+                    })
+                    .moveDown(1);
+                
+                // Add certificate text
+                this.doc
+                    .font('Helvetica')
+                    .fontSize(16)
+                    .text('This is to certify that', {
+                        align: 'center'
+                    })
+                    .moveDown(0.5);
+                
+                // Add name
+                this.doc
+                    .font('Helvetica-Bold')
+                    .fontSize(30)
+                    .fillColor('#1B3C73')
+                    .text(name, {
+                        align: 'center'
+                    })
+                    .moveDown(0.5);
+                
+                // Add exam completion text
+                this.doc
+                    .font('Helvetica')
+                    .fontSize(16)
+                    .fillColor('#000000')
+                    .text(`has successfully completed the ${examTitle || 'course examination'}${score ? ` with a score of ${score}` : ''}`, {
+                        align: 'center'
+                    })
+                    .moveDown(2);
+                
+                // Add signature line and date
+                const signatureY = 450;
+                this.doc
+                    .moveTo(250, signatureY)
+                    .lineTo(400, signatureY)
+                    .stroke()
+                    .moveTo(550, signatureY)
+                    .lineTo(700, signatureY)
+                    .stroke();
+                
+                // Add signature labels
+                this.doc
+                    .font('Helvetica')
+                    .fontSize(12)
+                    .text(directorName, 250, signatureY + 10, {
+                        width: 150,
+                        align: 'center'
+                    })
+                    .text('Date of Issue', 550, signatureY + 10, {
+                        width: 150,
+                        align: 'center'
+                    });
+                
+                // Add date text
+                this.doc
+                    .font('Helvetica-Bold')
+                    .fontSize(12)
+                    .text(dateOfIssue, 550, signatureY - 20, {
+                        width: 150,
+                        align: 'center'
+                    });
+                
+                // Add certificate ID at bottom
+                this.doc
+                    .font('Helvetica')
+                    .fontSize(10)
+                    .text(`Certificate ID: ${certificateId}`, 50, 550, {
+                        width: 400
+                    });
+                
+                // Save the PDF file path
+                const outputPath = path.join(certDir, `certificate-${certificateId}.pdf`);
+                
+                // Return a promise for async resolution
+                return new Promise((resolve, reject) => {
+                    const writeStream = fs.createWriteStream(outputPath);
+                    this.doc.pipe(writeStream);
+                    this.doc.end();
+                    
+                    writeStream.on('finish', () => {
+                        resolve(outputPath);
+                    });
+                    
+                    writeStream.on('error', reject);
+                });
+            }
+            
+            // If template exists, use it (original template flow)
+            // For JSON templates, parse the design
+            if (imagePath.endsWith('.json')) {
+                try {
+                    const design = JSON.parse(fs.readFileSync(imagePath, 'utf8'));
+                    // Implementation for JSON-based certificate would go here
+                    // This is just a placeholder for future development
+                    
+                    // For now, fall back to the basic certificate
+                    return this.generateBasicCertificate(data, certDir);
+                } catch (e) {
+                    console.error('Error parsing JSON template:', e);
+                    return this.generateBasicCertificate(data, certDir);
+                }
+            }
+
+            // For image-based template
             const imageInfo = this.doc.openImage(imagePath);
             
             // Set page size based on image dimensions
@@ -168,15 +318,113 @@ class CertificateGenerator {
             });
 
         } catch (error) {
-            throw error;
+            console.error("Certificate generation error:", error);
+            // Fall back to basic certificate if any error occurs
+            return this.generateBasicCertificate(data, this.ensureCertificateDir());
         }
+    }
+
+    // Helper method to generate a basic certificate without requiring a template
+    async generateBasicCertificate(data, certDir) {
+        const { name, certificateId, directorName, dateOfIssue, examTitle, score } = data;
+        
+        // Create new PDFDocument instance
+        const doc = new PDFDocument({
+            size: [842, 595], // A4 landscape
+            margin: 50
+        });
+        
+        // Set up the PDF
+        doc.font('Helvetica-Bold')
+           .fontSize(40)
+           .fillColor('#1B3C73')
+           .text('CERTIFICATE OF ACHIEVEMENT', {
+               align: 'center'
+           })
+           .moveDown(0.5);
+        
+        doc.font('Helvetica')
+           .fontSize(20)
+           .text('TechOnquer Education', {
+               align: 'center'
+           })
+           .moveDown(1);
+        
+        doc.fontSize(16)
+           .text('This is to certify that', {
+               align: 'center'
+           })
+           .moveDown(0.5);
+        
+        doc.font('Helvetica-Bold')
+           .fontSize(30)
+           .text(name, {
+               align: 'center'
+           })
+           .moveDown(0.5);
+        
+        doc.font('Helvetica')
+           .fontSize(16)
+           .text(`has successfully completed the ${examTitle || 'course examination'}${score ? ` with a score of ${score}` : ''}`, {
+               align: 'center'
+           })
+           .moveDown(2);
+        
+        // Draw signature lines
+        const signatureY = 400;
+        doc.moveTo(250, signatureY)
+           .lineTo(400, signatureY)
+           .stroke()
+           .moveTo(550, signatureY)
+           .lineTo(700, signatureY)
+           .stroke();
+        
+        // Add signature labels
+        doc.font('Helvetica')
+           .fontSize(12)
+           .text(directorName, 250, signatureY + 10, {
+               width: 150,
+               align: 'center'
+           })
+           .text('Date of Issue', 550, signatureY + 10, {
+               width: 150,
+               align: 'center'
+           });
+        
+        // Add date
+        doc.font('Helvetica-Bold')
+           .fontSize(12)
+           .text(dateOfIssue, 550, signatureY - 20, {
+               width: 150,
+               align: 'center'
+           });
+        
+        // Add certificate ID
+        doc.font('Helvetica')
+           .fontSize(10)
+           .text(`Certificate ID: ${certificateId}`, 50, 500);
+        
+        // Save the PDF
+        const outputPath = path.join(certDir, `certificate-${certificateId}.pdf`);
+        
+        return new Promise((resolve, reject) => {
+            const writeStream = fs.createWriteStream(outputPath);
+            doc.pipe(writeStream);
+            doc.end();
+            
+            writeStream.on('finish', () => {
+                resolve(outputPath);
+            });
+            
+            writeStream.on('error', reject);
+        });
     }
 
     // Helper method to ensure Certificate directory exists
     ensureCertificateDir() {
         const certDir = path.join(__dirname, '../tmp');
         if (!fs.existsSync(certDir)) {
-            fs.mkdirSync(certDir);
+            fs.mkdirSync(certDir, { recursive: true });
         }
         return certDir;
     }
@@ -192,48 +440,48 @@ const generateCertificate = async (data, res) => {
         // Check if this is a direct API call or programmatic call
         let certificateData = data;
         if (data.body) {
-            // This is a direct API call through HTTP request
             certificateData = data.body;
-            res = data; // Assign the request object to res
+            res = data;
         }
         
-        const { name, directorName, dateOfIssue, email, examTitle, passed = true } = certificateData;
+        const { name, directorName, dateOfIssue, email, examTitle, score, passed = true } = certificateData;
         
-        // Only generate certificates for passing students (controlled by the exam controller)
-        // This is a safety check in case this function is called directly
+        console.log(`Generating certificate for: ${name}, exam: ${examTitle}, score: ${score}`);
+        
+        // Only generate certificates for passing students
         if (!passed && !res) {
-            // If called programmatically and student failed, don't generate certificate
             return {
                 success: false,
                 message: "Certificate not generated - student did not pass"
             };
         }
         
-        // Generate a short certificateId (max 11 chars)
-        const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
-        const randomSuffix = Math.random().toString(36).substring(2, 5); // 3 random chars
-        const certificateId = `TC${timestamp}${randomSuffix}`.substring(0, 11); // TC + timestamp + random, max 11 chars
+        // Generate a short certificateId
+        const timestamp = Date.now().toString().slice(-6);
+        const randomSuffix = Math.random().toString(36).substring(2, 5);
+        const certificateId = `TC${timestamp}${randomSuffix}`.substring(0, 11);
         
         // Validate required fields
         if (!name || !directorName || !dateOfIssue) {
             const errorMsg = 'Missing required certificate fields';
             if (res && res.status) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: errorMsg
-                });
+                return res.status(400).json({ success: false, error: errorMsg });
             }
             throw new Error(errorMsg);
         }
         
-        // Generate certificate
+        // Generate certificate with all available data
         const certificatePath = await generator.generateCertificate({
             name,
             certificateId,
             directorName,
             dateOfIssue,
-            email
+            email,
+            examTitle,
+            score
         });
+        
+        console.log(`Certificate generated at: ${certificatePath}`);
         
         let emailSent = false;
         
@@ -245,23 +493,26 @@ const generateCertificate = async (data, res) => {
                     path: certificatePath
                 }];
                 
-                // Create email subject and text for certificate
                 const emailSubject = examTitle 
                     ? `Your TechOnquer Certificate for ${examTitle}` 
                     : `Your TechOnquer Certificate`;
                 
-                const emailText = `
-                    <p>Dear ${name},</p>
-                    <p>Congratulations on successfully completing the exam${examTitle ? ` "${examTitle}"` : ''}!</p>
-                    <p>Please find your certificate attached.</p>
-                    <p>Certificate ID: ${certificateId}</p>
-                    <p>Date of Issue: ${dateOfIssue}</p>
-                    <p>Best regards,<br>${directorName}</p>
+                const emailHtml = `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #1B3C73;">Congratulations, ${name}!</h2>
+                        <p>You have successfully completed the exam <strong>${examTitle || 'course'}</strong>
+                        ${score ? ` with a score of <strong>${score}</strong>` : ''}!</p>
+                        <p>Your certificate is attached to this email.</p>
+                        <p><strong>Certificate ID:</strong> ${certificateId}</p>
+                        <p><strong>Date of Issue:</strong> ${dateOfIssue}</p>
+                        <p>Best regards,<br>${directorName}</p>
+                    </div>
                 `;
                 
-                await mailSender(email, emailSubject, emailText, attachments);
+                await mailSender(email, emailSubject, emailHtml, attachments);
                 emailSent = true;
             } catch (emailError) {
+                console.error(`Failed to send certificate email: ${emailError.message}`);
             }
         }
         
@@ -276,45 +527,43 @@ const generateCertificate = async (data, res) => {
                 certificatePath,
                 examTitle: certificateData.examTitle || null,
                 score: certificateData.score || null,
-                passed: true, // All generated certificates are for passing students
+                passed: true,
                 emailSent
             });
             
-            // Return data for programmatic calls
+            // Return data
             const resultData = {
                 success: true,
                 message: "Certificate generated successfully",
                 certificateId,
-                path: certificatePath,
+                certificatePath,
                 emailSent
             };
             
-            // Return response for API calls
             if (res && res.status) {
                 res.status(200).json(resultData);
             }
             
             return resultData;
         } catch (dbError) {
-            const errorMsg = 'Failed to save certificate to database';
-            if (res && res.status) {
-                res.status(500).json({
-                    success: false,
-                    error: errorMsg,
-                    details: dbError.message
-                });
-            }
-            
-            throw new Error(`${errorMsg}: ${dbError.message}`);
+            console.error(`DB Error: ${dbError.message}`);
+            // Still return the certificate info even if DB save failed
+            return {
+                success: true,
+                message: "Certificate generated successfully",
+                certificateId,
+                certificatePath,
+                emailSent
+            };
         }
     } catch (error) {
+        console.error(`Certificate generation failed: ${error.message}`);
         if (res && res.status) {
             res.status(500).json({
                 success: false,
                 error: error.message || 'Failed to generate certificate'
             });
         }
-        
         throw error;
     }
 };
