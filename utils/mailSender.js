@@ -13,27 +13,27 @@ dotenv.config();
  */
 const mailSender = async (email, subject, html, attachments) => {
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.MAIL_HOST,
-      port: process.env.MAIL_PORT,
-      secure: process.env.MAIL_PORT == 465,
-      auth: {
-        user: process.env.USER1,
-        pass: process.env.PASS,
-      },
-      logger: true,
-      debug: true,
-    });
+    // const transporter = nodemailer.createTransport({
+    //   host: process.env.MAIL_HOST,
+    //   port: process.env.MAIL_PORT,
+    //   secure: process.env.MAIL_PORT == 465,
+    //   auth: {
+    //     user: process.env.USER1,
+    //     pass: process.env.PASS,
+    //   },
+    //   logger: true,
+    //   debug: true,
+    // });
 
-    let mailOptions = {
-      from: `"TechOnquer Certifications" <${process.env.USER1}>`,
-      to: email,
-      subject: subject,
-      html: html, // Use the HTML content directly without wrapping in <p> tags
-      attachments: attachments || [], // Ensure attachments is always an array
-    };
+    // let mailOptions = {
+    //   from: `"TechOnquer Certifications" <${process.env.USER1}>`,
+    //   to: email,
+    //   subject: subject,
+    //   html: html, // Use the HTML content directly without wrapping in <p> tags
+    //   attachments: attachments || [], // Ensure attachments is always an array
+    // };
 
-    let info = await transporter.sendMail(mailOptions);
+    // let info = await transporter.sendMail(mailOptions);
     console.log(`Email sent to ${email}: ${info.messageId}`);
     return info;
   } catch (error) {
@@ -60,53 +60,53 @@ const sendCertificateEmail = async ({ email, subject, name, certificateId, examT
     console.log(`Sending email with certificate attachment to ${email}`);
     
     // Create email with attachment
-    const transporter = nodemailer.createTransport({
-      host: process.env.MAIL_HOST,
-      port: process.env.MAIL_PORT,
-      secure: process.env.MAIL_PORT == 465,
-      auth: {
-        user: process.env.USER1,
-        pass: process.env.PASS,
-      },
-      logger: true,
-      debug: true,
-    });
+  //   const transporter = nodemailer.createTransport({
+  //     host: process.env.MAIL_HOST,
+  //     port: process.env.MAIL_PORT,
+  //     secure: process.env.MAIL_PORT == 465,
+  //     auth: {
+  //       user: process.env.USER1,
+  //       pass: process.env.PASS,
+  //     },
+  //     logger: true,
+  //     debug: true,
+  //   });
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || 'your-email@example.com',
-      to: email,
-      subject: subject,
-      html: `
-        <h1>${passed ? 'Congratulations' : 'Exam Results'}!</h1>
-        <p>Hello ${name},</p>
-        <p>You have ${passed ? 'successfully completed' : 'completed'} the exam <b>${examTitle}</b>.</p>
-        <p>${passed ? 'Your certificate is attached to this email.' : 'Your results are attached to this email.'}</p>
-        <p>Certificate ID: ${certificateId}</p>
-        <p>Thank you!</p>
-      `,
-      attachments: [
-        {
-          filename: `${examTitle.replace(/\s+/g, '_')}_Certificate.pdf`,
-          path: certificatePath,
-          contentType: 'application/pdf'
-        }
-      ]
-    };
+  //   const mailOptions = {
+  //     from: process.env.EMAIL_FROM || 'your-email@example.com',
+  //     to: email,
+  //     subject: subject,
+  //     html: `
+  //       <h1>${passed ? 'Congratulations' : 'Exam Results'}!</h1>
+  //       <p>Hello ${name},</p>
+  //       <p>You have ${passed ? 'successfully completed' : 'completed'} the exam <b>${examTitle}</b>.</p>
+  //       <p>${passed ? 'Your certificate is attached to this email.' : 'Your results are attached to this email.'}</p>
+  //       <p>Certificate ID: ${certificateId}</p>
+  //       <p>Thank you!</p>
+  //     `,
+  //     attachments: [
+  //       {
+  //         filename: `${examTitle.replace(/\s+/g, '_')}_Certificate.pdf`,
+  //         path: certificatePath,
+  //         contentType: 'application/pdf'
+  //       }
+  //     ]
+  //   };
     
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`Email sent: ${info.messageId}`);
-    return true;
+  //   // Send email
+  //   const info = await transporter.sendMail(mailOptions);
+  //   console.log(`Email sent: ${info.messageId}`);
+  //   return true;
   } catch (error) {
     console.error(`Error sending certificate email (attempt ${4-retryCount}/3):`, error);
     
-    // Implement retries
-    if (retryCount > 1) {
-      console.log(`Retrying email send to ${email}... (${retryCount-1} attempts remaining)`);
-      return sendCertificateEmail({ email, subject, name, certificateId, examTitle, passed, certificatePath }, retryCount - 1);
-    }
+    // // Implement retries
+    // if (retryCount > 1) {
+    //   console.log(`Retrying email send to ${email}... (${retryCount-1} attempts remaining)`);
+    //   return sendCertificateEmail({ email, subject, name, certificateId, examTitle, passed, certificatePath }, retryCount - 1);
+    // }
     
-    return false;
+    // return false;
   }
 };
 

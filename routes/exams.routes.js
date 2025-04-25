@@ -17,6 +17,10 @@ router.get("/", authenticateUser,
 router.get("/pending", authenticateUser, checkRole("admin"), 
   examController.getPendingExams ? examController.getPendingExams : fallback("getPendingExams"));
 
+// Only admin users can view approved exams
+router.get("/approved", authenticateUser, checkRole("admin"), 
+  examController.getApprovedExams ? examController.getApprovedExams : fallback("getApprovedExams"));
+
 // All authenticated users can view a single exam (but only published ones for non-admins)
 router.get("/:id", authenticateUser, 
   examController.getExamById ? examController.getExamById : fallback("getExamById"));

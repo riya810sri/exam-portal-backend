@@ -333,7 +333,7 @@ const completeExam = async (req, res) => {
     // Get exam details with correct answers
     const exam = await Exam.findById(examId).populate({
       path: 'sections.mcqs',
-      select: 'questionText options correctAnswer _id'
+      select: 'questionText options correctAnswer correctOption _id'
     });
     
     if (!exam) {
@@ -374,7 +374,9 @@ const completeExam = async (req, res) => {
       
       if (question) {
         totalAnswered++;
-        const isCorrect = question.correctAnswer === selectedAnswer;
+        // Check for correct answer using either correctAnswer or correctOption field
+        const correctValue = question.correctOption || question.correctAnswer;
+        const isCorrect = correctValue === selectedAnswer;
         if (isCorrect) score++;
         
         processedAnswers.push({

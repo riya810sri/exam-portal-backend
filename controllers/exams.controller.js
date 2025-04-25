@@ -230,6 +230,21 @@ const publishExam = async (req, res) => {
   }
 };
 
+const getApprovedExams = async (req, res) => {
+  try {
+    const approvedExams = await Exam.find({ status: "APPROVED" })
+      .populate("createdBy", "username firstName lastName")
+      .populate("approvedBy", "username firstName lastName")
+      .select("title description duration createdBy approvedBy approvedAt createdAt");
+      
+    res.status(200).json(approvedExams);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ error: "Internal Server Error", details: error.message });
+  }
+};
+
 const attendExam = async (req, res) => {
   try {
     const { examId } = req.params;
@@ -324,5 +339,6 @@ module.exports = {
   updateExam,
   approveExam,
   publishExam,
+  getApprovedExams,
   attendExam,
 };
