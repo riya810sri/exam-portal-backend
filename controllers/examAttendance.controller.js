@@ -5,6 +5,7 @@ const { generateCertificate } = require("./certificate.controller");
 const User = require("../models/user.model");
 const TmpExamStudentData = require('../models/tmp.model');
 const { mailSender, sendCertificateEmail } = require('../utils/mailSender'); // Add this import
+const mongoose = require('mongoose'); // Import mongoose
 
 // Store user answers and randomized questions temporarily in memory
 const userExamData = {};
@@ -19,9 +20,71 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
+// Helper function to get real attempt count and fix inconsistencies
+const getRealAttemptCount = async (examId, userId) => {
+  try {
+    // Get all completed or timed out attempts
+    const completedAttempts = await ExamAttendance.find({
+      examId, 
+      userId,
+      status: { $in: ["COMPLETED", "TIMED_OUT"] }
+    }).sort({ attemptNumber: 1 });
+    
+    // Get in-progress attempts
+    const inProgressAttempts = await ExamAttendance.find({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+    
+    // Calculate real attempt count (only count completed/timed out and one in-progress)
+    const realCount = completedAttempts.length + (inProgressAttempts.length > 0 ? 1 : 0);
+    
+    // Check if database has inconsistent attempt numbers
+    if (completedAttempts.length > 0) {
+      // Check if attempt numbers are sequential starting from 1
+      let needsFixing = false;
+      for (let i = 0; i < completedAttempts.length; i++) {
+        if (completedAttempts[i].attemptNumber !== i + 1) {
+          needsFixing = true;
+          break;
+        }
+      }
+      
+      // Fix attempt numbers if needed
+      if (needsFixing) {
+        console.log(`Fixing inconsistent attempt numbers for user ${userId}, exam ${examId}`);
+        for (let i = 0; i < completedAttempts.length; i++) {
+          completedAttempts[i].attemptNumber = i + 1;
+          await completedAttempts[i].save();
+        }
+        
+        // Also update any in-progress attempt
+        if (inProgressAttempts.length > 0) {
+          inProgressAttempts[0].attemptNumber = completedAttempts.length + 1;
+          await inProgressAttempts[0].save();
+          
+          // Cancel any extra in-progress attempts
+          if (inProgressAttempts.length > 1) {
+            for (let i = 1; i < inProgressAttempts.length; i++) {
+              await ExamAttendance.findByIdAndDelete(inProgressAttempts[i]._id);
+            }
+          }
+        }
+      }
+    }
+    
+    return realCount;
+  } catch (error) {
+    console.error("Error in getRealAttemptCount:", error);
+    return 0; // Default to 0 on error
+  }
+};
+
 // Start attending exam
 const attendExam = async (req, res) => {
   try {
+    console.log("Starting exam attendance process");
     const { examId } = req.params;
     const { page = 1, limit = 1, newAttempt = false } = req.query;
     const userId = req.user._id;
@@ -29,20 +92,72 @@ const attendExam = async (req, res) => {
     const limitNum = parseInt(limit);
     const MAX_ATTEMPTS = 2; // Maximum allowed attempts
 
+    console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
+    
+    // Fix the duplicate key issue by dropping the old index
+    try {
+      // Only try to fix the index if we are creating a new attempt
+      if (newAttempt === 'true') {
+        console.log("Attempting to fix index issues for multiple attempts...");
+        const connection = mongoose.connection;
+        
+        if (connection.readyState === 1) { // 1 = connected
+          try {
+            await connection.db.collection('examattendances').dropIndex('examId_1_userId_1');
+            console.log("Successfully dropped old index");
+          } catch (indexError) {
+            console.log("Index might be already fixed or not exist:", indexError.message);
+            // Continue execution regardless
+          }
+        }
+      }
+    } catch (indexError) {
+      console.log("Index operation failed but continuing:", indexError.message);
+      // We continue as the exam might still work
+    }
+
     // Find the exam and populate the MCQ questions
+    console.log(`Looking for exam with ID: ${examId}`);
     const exam = await Exam.findById(examId).populate({
       path: 'sections.mcqs',
       select: 'questionText options'
     });
 
     if (!exam) {
+      console.log("Exam not found");
       return res.status(404).json({ message: "Exam not found" });
     }
     
+    console.log(`Found exam: ${exam.title}, status: ${exam.status}`);
+    
     // Check if the exam is published
     if (exam.status !== "PUBLISHED") {
+      console.log(`Exam is not published, current status: ${exam.status}`);
       return res.status(403).json({ 
         message: "This exam is not available for attendance. Only published exams can be attended." 
+      });
+    }
+    
+    // Get real attempt count and fix inconsistencies
+    const realAttemptCount = await getRealAttemptCount(examId, userId);
+    console.log(`User has ${realAttemptCount} real attempts for this exam`);
+    
+    // Check if user has already completed the maximum allowed attempts
+    if (realAttemptCount >= MAX_ATTEMPTS) {
+      // Get the completed attempts to show details
+      const completedAttempts = await ExamAttendance.find({
+        examId,
+        userId,
+        status: { $in: ["COMPLETED", "TIMED_OUT"] }
+      }).select('attemptNumber score totalQuestions status');
+      
+      console.log(`User reached maximum attempts (${MAX_ATTEMPTS})`);
+      
+      return res.status(403).json({ 
+        message: "Maximum attempts reached. You can only take this exam twice.",
+        maxAttempts: MAX_ATTEMPTS,
+        currentAttempts: realAttemptCount,
+        attempts: completedAttempts
       });
     }
     
@@ -50,20 +165,7 @@ const attendExam = async (req, res) => {
     let attendance;
     
     if (newAttempt === 'true') {
-      // Check existing attempts count
-      const attemptCount = await ExamAttendance.countDocuments({ 
-        examId, 
-        userId
-      });
-      
-      // Check if user has reached maximum attempts
-      if (attemptCount >= MAX_ATTEMPTS) {
-        return res.status(403).json({ 
-          message: "Maximum attempts reached. You can only take this exam twice.",
-          maxAttempts: MAX_ATTEMPTS,
-          currentAttempts: attemptCount 
-        });
-      }
+      console.log("Creating new attempt as requested");
       
       // Check if previous attempt is completed or timed out
       const prevAttempt = await ExamAttendance.findOne({ 
@@ -72,16 +174,139 @@ const attendExam = async (req, res) => {
         status: { $in: ["COMPLETED", "TIMED_OUT"] } 
       }).sort({ createdAt: -1 });
       
-      // Create a new attempt
-      attendance = new ExamAttendance({
-        examId,
-        userId,
-        totalQuestions: exam.sections.mcqs.length,
-        startTime: new Date(),
-        status: "IN_PROGRESS",
-        attemptNumber: prevAttempt ? prevAttempt.attemptNumber + 1 : 1
-      });
-      await attendance.save();
+      if (prevAttempt) {
+        console.log(`Previous attempt found with status: ${prevAttempt.status}`);
+      } else {
+        console.log("No previous attempts found");
+      }
+      
+      // Calculate next attempt number based on real attempt count
+      const nextAttemptNumber = realAttemptCount + 1;
+      console.log(`Creating new attempt with number: ${nextAttemptNumber}`);
+      
+      try {
+        // First, cancel any existing in-progress attempts
+        await ExamAttendance.updateMany(
+          { examId, userId, status: "IN_PROGRESS" },
+          { status: "TIMED_OUT", endTime: new Date() }
+        );
+        
+        // Try to fix the duplicate key issue explicitly
+        try {
+          const connection = mongoose.connection;
+          if (connection && connection.readyState === 1) {
+            // Try to drop the problematic index directly
+            try {
+              // Get all indexes
+              const indexes = await connection.db.collection('examattendances').indexes();
+              // Check if the index exists
+              const oldIndex = indexes.find(idx => 
+                idx.name === 'examId_1_userId_1' || 
+                (idx.key && idx.key.examId === 1 && idx.key.userId === 1 && !idx.key.attemptNumber)
+              );
+              
+              if (oldIndex) {
+                await connection.db.collection('examattendances').dropIndex(oldIndex.name);
+                console.log(`Successfully dropped problematic index: ${oldIndex.name}`);
+              }
+            } catch (indexError) {
+              console.log("Index drop failed or not needed:", indexError.message);
+            }
+            
+            // Create the compound index with attemptNumber if it doesn't exist
+            try {
+              await connection.db.collection('examattendances').createIndex(
+                { examId: 1, userId: 1, attemptNumber: 1 },
+                { unique: true }
+              );
+              console.log("Created or verified proper index with attemptNumber");
+            } catch (indexCreateError) {
+              console.log("Index creation failed or already exists:", indexCreateError.message);
+            }
+          }
+        } catch (indexOpsError) {
+          console.log("Index operations failed but continuing:", indexOpsError.message);
+        }
+        
+        // Double check and delete any duplicate documents that might cause conflicts
+        try {
+          const existingAttempts = await ExamAttendance.find({
+            examId, 
+            userId, 
+            attemptNumber: nextAttemptNumber
+          });
+          
+          if (existingAttempts.length > 0) {
+            console.log(`Found ${existingAttempts.length} conflicting attempts, removing them`);
+            await ExamAttendance.deleteMany({
+              examId, 
+              userId, 
+              attemptNumber: nextAttemptNumber
+            });
+          }
+        } catch (cleanupError) {
+          console.log("Cleanup failed but continuing:", cleanupError.message);
+        }
+        
+        // Create a new attempt
+        attendance = new ExamAttendance({
+          examId,
+          userId,
+          totalQuestions: exam.sections.mcqs.length,
+          startTime: new Date(),
+          status: "IN_PROGRESS",
+          attemptNumber: nextAttemptNumber
+        });
+        
+        await attendance.save();
+        console.log(`New attendance record created with ID: ${attendance._id}`);
+      } catch (saveError) {
+        console.error("Error saving attendance record:", saveError);
+        // Check if it's a duplicate key error
+        if (saveError.code === 11000) {
+          // Cleanup any stray records and try again with a more aggressive approach
+          try {
+            console.log("Duplicate key detected. Performing thorough cleanup...");
+            
+            // Cancel all in-progress attempts
+            await ExamAttendance.updateMany(
+              { examId, userId, status: "IN_PROGRESS" },
+              { status: "TIMED_OUT", endTime: new Date() }
+            );
+            
+            // Delete any problematic attempts with the next attempt number
+            await ExamAttendance.deleteMany({
+              examId, 
+              userId, 
+              attemptNumber: nextAttemptNumber
+            });
+            
+            // Wait a moment for MongoDB to process the deletes
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Try creating the attempt one more time
+            attendance = new ExamAttendance({
+              examId,
+              userId,
+              totalQuestions: exam.sections.mcqs.length,
+              startTime: new Date(),
+              status: "IN_PROGRESS",
+              attemptNumber: nextAttemptNumber
+            });
+            
+            await attendance.save();
+            console.log(`Successfully created attendance record after cleanup: ${attendance._id}`);
+          } catch (retryError) {
+            console.error("Final attempt to create record failed:", retryError);
+            return res.status(500).json({
+              message: "Could not create a new exam attempt. Please try again later.",
+              error: "Database error"
+            });
+          }
+        } else {
+          throw saveError; // rethrow for the outer catch block
+        }
+      }
 
       // Randomize questions and store in memory
       const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -96,7 +321,10 @@ const attendExam = async (req, res) => {
         userAnswers: {},
         attemptId: attendance._id
       };
+      
+      console.log("Questions randomized and stored in memory");
     } else {
+      console.log("Looking for existing in-progress attempt");
       // Find the latest active attempt
       attendance = await ExamAttendance.findOne({ 
         examId, 
@@ -105,31 +333,33 @@ const attendExam = async (req, res) => {
       }).sort({ createdAt: -1 });
 
       if (!attendance) {
-        // Check existing attempts count before creating first attempt
-        const attemptCount = await ExamAttendance.countDocuments({ 
-          examId, 
-          userId
-        });
+        console.log("No in-progress attempt found, creating a new one");
         
-        // Check if user has reached maximum attempts
-        if (attemptCount >= MAX_ATTEMPTS) {
-          return res.status(403).json({ 
-            message: "Maximum attempts reached. You can only take this exam twice.",
-            maxAttempts: MAX_ATTEMPTS,
-            currentAttempts: attemptCount 
+        try {
+          // Create first attempt
+          attendance = new ExamAttendance({
+            examId,
+            userId,
+            totalQuestions: exam.sections.mcqs.length,
+            startTime: new Date(),
+            status: "IN_PROGRESS",
+            attemptNumber: 1
           });
+          
+          await attendance.save();
+          console.log(`New first attendance record created with ID: ${attendance._id}`);
+        } catch (saveError) {
+          console.error("Error saving first attendance record:", saveError);
+          // Check if it's a duplicate key error
+          if (saveError.code === 11000) {
+            return res.status(409).json({
+              message: "You already have an attempt for this exam in progress.",
+              error: "DuplicateKeyError"
+            });
+          } else {
+            throw saveError; // rethrow for the outer catch block
+          }
         }
-        
-        // Create first attempt
-        attendance = new ExamAttendance({
-          examId,
-          userId,
-          totalQuestions: exam.sections.mcqs.length,
-          startTime: new Date(),
-          status: "IN_PROGRESS",
-          attemptNumber: 1
-        });
-        await attendance.save();
 
         // Randomize questions and store in memory
         const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -144,100 +374,90 @@ const attendExam = async (req, res) => {
           userAnswers: {},
           attemptId: attendance._id
         };
-      } else if (!userExamData[userId] || !userExamData[userId][examId] || 
-                userExamData[userId][examId].attemptId.toString() !== attendance._id.toString()) {
-        // If memory was cleared (server restart) or mismatch in attempt ID
-        const randomizedQuestions = shuffleArray(exam.sections.mcqs);
         
-        // Re-initialize user exam data
-        if (!userExamData[userId]) {
-          userExamData[userId] = {};
+        console.log("Questions randomized and stored in memory for first attempt");
+      } else {
+        console.log(`Found existing in-progress attempt: ${attendance._id}`);
+        
+        if (!userExamData[userId] || !userExamData[userId][examId] || 
+                  userExamData[userId][examId].attemptId.toString() !== attendance._id.toString()) {
+          console.log("No in-memory data found for existing attempt, reinitializing");
+          // If memory was cleared (server restart) or mismatch in attempt ID
+          const randomizedQuestions = shuffleArray(exam.sections.mcqs);
+          
+          // Re-initialize user exam data
+          if (!userExamData[userId]) {
+            userExamData[userId] = {};
+          }
+          
+          userExamData[userId][examId] = {
+            randomizedQuestions,
+            userAnswers: {},
+            attemptId: attendance._id
+          };
+          
+          console.log("Re-initialized question data in memory");
         }
-        
-        userExamData[userId][examId] = {
-          randomizedQuestions,
-          userAnswers: {},
-          attemptId: attendance._id
-        };
       }
     }
     
-    // Get randomized questions
-    const questions = userExamData[userId][examId].randomizedQuestions;
+    // Get randomized questions - using let instead of const for questions variable
+    let questions = userExamData[userId]?.[examId]?.randomizedQuestions || [];
+    if (questions.length === 0) {
+      console.log("Warning: No questions found in memory, using exam questions directly");
+      // Fallback to using all questions from the exam
+      questions = exam.sections.mcqs;
+    }
+    
+    console.log(`Total questions available: ${questions.length}`);
     
     // Calculate pagination
     const startIndex = (pageNum - 1) * limitNum;
     const endIndex = Math.min(pageNum * limitNum, questions.length);
     
+    console.log(`Pagination: page ${pageNum}, limit ${limitNum}, startIndex ${startIndex}, endIndex ${endIndex}`);
+    
     // Get questions for current page
     const currentPageQuestions = questions.slice(startIndex, endIndex);
+    console.log(`Retrieved ${currentPageQuestions.length} questions for current page`);
 
     // Calculate time remaining
     const startTime = new Date(attendance.startTime);
     const currentTime = new Date();
     const timeElapsed = (currentTime - startTime) / 1000 / 60; // in minutes
     const timeRemaining = Math.max(0, exam.duration - timeElapsed);
+    console.log(`Time elapsed: ${timeElapsed.toFixed(2)} minutes, remaining: ${timeRemaining.toFixed(2)} minutes`);
 
     // Check if exam time is up
     if (timeRemaining <= 0 && attendance.status === "IN_PROGRESS") {
+      console.log("Exam time is up, marking as timed out");
       attendance.status = "TIMED_OUT";
       attendance.endTime = new Date();
       await attendance.save();
-      
-      // Clean up memory
-      if (userExamData[userId] && userExamData[userId][examId]) {
-        delete userExamData[userId][examId];
-      }
-      
       return res.status(400).json({ 
         message: "Exam time is up!",
         status: "TIMED_OUT"
       });
     }
 
-    // Get any saved answers for this question
-    let savedAnswer = null;
-    if (currentPageQuestions.length > 0) {
-      const questionId = currentPageQuestions[0]._id.toString();
-      savedAnswer = userExamData[userId][examId].userAnswers[questionId];
-    }
-    
-    // Format response
-    const responseData = {
+    console.log("Sending exam question to client");
+    res.status(200).json({
       examTitle: exam.title,
-      currentPage: pageNum,
+      currentPage: parseInt(page),
       totalPages: Math.ceil(questions.length / limitNum),
       totalQuestions: questions.length,
+      question: currentPageQuestions.length > 0 ? currentPageQuestions[0] : null,
       timeRemaining: Math.round(timeRemaining),
       attendanceId: attendance._id,
-      currentQuestionIndex: (pageNum - 1),
       attemptNumber: attendance.attemptNumber
-    };
-    
-    // Add question data if available
-    if (currentPageQuestions.length > 0) {
-      responseData.question = currentPageQuestions[0];
-      responseData.userAnswer = savedAnswer || null;
-    } else {
-      responseData.message = "No questions found for this page";
-    }
-
-    // Include debug info in development
-    if (process.env.NODE_ENV === 'development') {
-      responseData.debug = {
-        questionCount: questions.length,
-        currentPageCount: currentPageQuestions.length,
-        examHasMcqs: exam.sections && exam.sections.mcqs && exam.sections.mcqs.length > 0,
-        pagination: { startIndex, endIndex, page: pageNum, limit: limitNum }
-      };
-    }
-
-    res.status(200).json(responseData);
+    });
 
   } catch (error) {
+    console.error("Error in attendExam:", error);
     res.status(500).json({ 
+      message: "Failed to start exam session. Please try again.",
       error: "Internal Server Error", 
-      details: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
@@ -250,38 +470,64 @@ const submitAnswer = async (req, res) => {
     const { questionId, selectedAnswer } = req.body;
     const userId = req.user._id;
 
-    // Find attendance record to verify exam is in progress
-    const attendance = await ExamAttendance.findOne({ 
-      examId,
-      userId,
-      status: "IN_PROGRESS"
-    }).sort({ createdAt: -1 });
-    
-    if (!attendance) {
-      return res.status(404).json({ message: "No active exam session found" });
-    }
-
-    // Check if we have data for this user/exam
-    if (!userExamData[userId] || !userExamData[userId][examId] ||
-        userExamData[userId][examId].attemptId.toString() !== attendance._id.toString()) {
+    if (!questionId || !selectedAnswer) {
       return res.status(400).json({ 
-        message: "Exam session data not found, please restart the exam" 
+        message: "Question ID and selected answer are required" 
       });
     }
 
-    // Save answer in memory
+    // First check if this user has an in-progress attendance for this exam
+    const attendance = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+
+    if (!attendance) {
+      return res.status(404).json({ 
+        message: "No active exam session found. Please start the exam first." 
+      });
+    }
+
+    // Initialize user exam data if it doesn't exist
+    if (!userExamData[userId]) {
+      userExamData[userId] = {};
+    }
+    
+    if (!userExamData[userId][examId]) {
+      // Find the exam to get question sequence
+      const exam = await Exam.findById(examId).populate({
+        path: 'sections.mcqs',
+        select: '_id'
+      });
+      
+      if (!exam) {
+        return res.status(404).json({ message: "Exam not found" });
+      }
+      
+      // Initialize with all question IDs
+      const allQuestionIds = exam.sections.mcqs.map(q => q._id.toString());
+      userExamData[userId][examId] = {
+        questionSequence: shuffleArray([...allQuestionIds]),
+        userAnswers: {}
+      };
+    }
+
+    // Store answer in memory
     userExamData[userId][examId].userAnswers[questionId] = selectedAnswer;
 
-    // Count total answers
-    const totalAnswers = Object.keys(userExamData[userId][examId].userAnswers).length;
+    // Update attendance
+    attendance.attemptedQuestions = Object.keys(userExamData[userId][examId].userAnswers).length;
+    attendance.lastUpdated = new Date();
+    await attendance.save();
 
-    res.status(200).json({
-      message: "Answer stored temporarily",
-      totalAnswered: totalAnswers,
-      totalQuestions: attendance.totalQuestions
+    res.status(200).json({ 
+      message: "Answer submitted successfully",
+      nextQuestion: null // You can add logic to return the next question if needed
     });
 
   } catch (error) {
+    console.error("Error in submitAnswer:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 

@@ -59,8 +59,7 @@ const examAttendanceSchema = new mongoose.Schema({
   }
 });
 
-// Index for faster queries but non-unique to allow multiple attempts
-examAttendanceSchema.index({ examId: 1, userId: 1, attemptNumber: 1 });
+examAttendanceSchema.index({ examId: 1, userId: 1, attemptNumber: 1 }, { unique: true });
 
 const ExamAttendance = mongoose.model("ExamAttendance", examAttendanceSchema);
 
