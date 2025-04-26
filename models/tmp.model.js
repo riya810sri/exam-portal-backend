@@ -12,6 +12,11 @@ const tmpExamStudentDataSchema = new mongoose.Schema(
       ref: 'Exam',
       required: true
     },
+    attemptNumber: {
+      type: Number,
+      default: 1,
+      required: true
+    },
     questionIds: {
       type: [mongoose.Schema.Types.Mixed],
       default: []
@@ -23,6 +28,9 @@ const tmpExamStudentDataSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Create a compound index to ensure uniqueness of records per attempt
+tmpExamStudentDataSchema.index({ userId: 1, examId: 1, attemptNumber: 1 }, { unique: true });
 
 const TmpExamStudentData = mongoose.model('TmpExamStudentData', tmpExamStudentDataSchema);
 module.exports = TmpExamStudentData;

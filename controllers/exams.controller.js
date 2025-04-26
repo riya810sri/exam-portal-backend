@@ -33,7 +33,13 @@ const createExam = async (req, res) => {
 
 const getAllExams = async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, page = 1, limit = 10, search } = req.query;
+    const userId = req.user._id;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const MAX_ATTEMPTS = 2; // Maximum allowed attempts per exam
+    
+    // Build the query
     let filter = {};
     
     // If status is provided, filter by status
@@ -44,16 +50,130 @@ const getAllExams = async (req, res) => {
       filter.status = "PUBLISHED";
     }
     
-    const exams = await Exam.find(filter)
-      .populate("sections.mcqs sections.shortAnswers")
-      .populate("createdBy", "username firstName lastName")
-      .populate("approvedBy", "username firstName lastName");
+    // Add search filter if provided
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Find all exams matching the filter (before pagination)
+    // We need this to apply user-specific filtering afterward
+    const allFilteredExams = await Exam.find(filter)
+      .select('title description duration sections.mcqs createdBy status publishedAt')
+      .sort({ publishedAt: -1 });
+    
+    // Get user's attempts for each exam to check status
+    const examIds = allFilteredExams.map(exam => exam._id);
+    const userAttempts = await ExamAttendance.find({
+      userId,
+      examId: { $in: examIds }
+    }).select('examId status score totalQuestions attemptNumber');
+    
+    // Group attempts by exam ID
+    const examAttemptsMap = {};
+    userAttempts.forEach(attempt => {
+      const examId = attempt.examId.toString();
+      if (!examAttemptsMap[examId]) {
+        examAttemptsMap[examId] = [];
+      }
+      examAttemptsMap[examId].push(attempt);
+    });
+    
+    // Filter exams based on attempts - remove exams that user has passed or reached max attempts
+    const availableExams = allFilteredExams.filter(exam => {
+      const examId = exam._id.toString();
+      const attempts = examAttemptsMap[examId] || [];
       
-    res.status(200).json(exams);
+      // If no attempts, keep the exam
+      if (attempts.length === 0) return true;
+      
+      // Check for passed attempts (score >= 60%)
+      let hasPassed = false;
+      let attemptCount = 0;
+      
+      attempts.forEach(attempt => {
+        if (attempt.status === "COMPLETED" || attempt.status === "TIMED_OUT") {
+          attemptCount++;
+          const percentage = (attempt.score / attempt.totalQuestions) * 100;
+          if (percentage >= 60) {
+            hasPassed = true;
+          }
+        }
+      });
+      
+      // Remove exam if user has passed it or reached max attempts
+      return !(hasPassed || attemptCount >= MAX_ATTEMPTS);
+    });
+    
+    // Apply pagination after filtering
+    const totalAvailable = availableExams.length;
+    const paginatedExams = availableExams.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    
+    // Add attempt information to exams
+    const examsList = paginatedExams.map(exam => {
+      const examId = exam._id.toString();
+      const attempts = examAttemptsMap[examId] || [];
+      
+      // Check for in-progress attempts and attempt count
+      let inProgress = false;
+      let attemptCount = 0;
+      let bestScore = 0;
+      let bestPercentage = 0;
+      
+      attempts.forEach(attempt => {
+        if (attempt.status === "IN_PROGRESS") {
+          inProgress = true;
+        }
+        
+        if (attempt.status === "COMPLETED" || attempt.status === "TIMED_OUT") {
+          attemptCount++;
+          const percentage = (attempt.score / attempt.totalQuestions) * 100;
+          if (percentage > bestPercentage) {
+            bestScore = attempt.score;
+            bestPercentage = percentage;
+          }
+        }
+      });
+      
+      return {
+        _id: exam._id,
+        title: exam.title,
+        description: exam.description,
+        duration: exam.duration,
+        status: exam.status,
+        questionCount: exam.sections.mcqs.length,
+        attempts: attempts.length,
+        publishedAt: exam.publishedAt,
+        // User's attempt status for this exam
+        userStatus: {
+          inProgress,
+          bestScore,
+          bestPercentage: bestPercentage.toFixed(1),
+          attemptCount,
+          canAttempt: attemptCount < MAX_ATTEMPTS,
+          remainingAttempts: Math.max(0, MAX_ATTEMPTS - attemptCount)
+        }
+      };
+    });
+    
+    res.status(200).json({
+      message: "Exams retrieved successfully",
+      page: pageNum,
+      limit: limitNum,
+      total: totalAvailable,
+      totalPages: Math.ceil(totalAvailable / limitNum),
+      exams: examsList
+    });
+    
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+    console.error("Error getting exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 

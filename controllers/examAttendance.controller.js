@@ -103,6 +103,31 @@ const attendExam = async (req, res) => {
 
     console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
     
+    // Check if user has already passed this exam (score >= 60%)
+    const passedAttempt = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: { $in: ["COMPLETED", "TIMED_OUT"] }
+    }).sort({ score: -1 }); // Get their best score
+    
+    if (passedAttempt && passedAttempt.totalQuestions > 0) {
+      const percentage = (passedAttempt.score / passedAttempt.totalQuestions) * 100;
+      
+      // If they scored 60% or higher, don't allow retaking the exam
+      if (percentage >= 60) {
+        console.log(`User ${userId} has already passed exam ${examId} with ${percentage.toFixed(2)}%`);
+        return res.status(403).json({
+          message: "You have already passed this exam. No additional attempts are permitted.",
+          score: passedAttempt.score,
+          totalQuestions: passedAttempt.totalQuestions,
+          percentage: percentage.toFixed(2),
+          attemptNumber: passedAttempt.attemptNumber,
+          passedAt: passedAttempt.endTime,
+          status: "PASSED"
+        });
+      }
+    }
+    
     // Fix the duplicate key issue by dropping the old index
     try {
       // Only try to fix the index if we are creating a new attempt
@@ -147,31 +172,31 @@ const attendExam = async (req, res) => {
       });
     }
     
-    // Get real attempt count and fix inconsistencies
-    const realAttemptCount = await getRealAttemptCount(examId, userId);
-    console.log(`User has ${realAttemptCount} real attempts for this exam`);
-    
-    // Check if user has already completed the maximum allowed attempts
-    if (realAttemptCount >= MAX_ATTEMPTS) {
-      // Get the completed attempts to show details
-      const completedAttempts = await ExamAttendance.find({
-        examId,
-        userId,
-        status: { $in: ["COMPLETED", "TIMED_OUT"] }
-      }).select('attemptNumber score totalQuestions status');
-      
-      console.log(`User reached maximum attempts (${MAX_ATTEMPTS})`);
-      
-      return res.status(403).json({ 
-        message: "Maximum attempts reached. You can only take this exam twice.",
-        maxAttempts: MAX_ATTEMPTS,
-        currentAttempts: realAttemptCount,
-        attempts: completedAttempts
-      });
+    // Check if the user has already passed this exam
+    const highestScoreAttempt = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "COMPLETED"
+    }).sort({ score: -1 });  // Get the highest score attempt
+
+    if (highestScoreAttempt) {
+      const percentage = (highestScoreAttempt.score / highestScoreAttempt.totalQuestions) * 100;
+      if (percentage >= 60) {
+        console.log(`User has already passed this exam with ${percentage.toFixed(2)}%`);
+        return res.status(403).json({
+          message: "You have already passed this exam. No additional attempts are permitted.",
+          score: highestScoreAttempt.score,
+          totalQuestions: highestScoreAttempt.totalQuestions,
+          percentage: percentage.toFixed(2),
+          attemptNumber: highestScoreAttempt.attemptNumber,
+          startDate: new Date(highestScoreAttempt.startTime).toLocaleDateString(),
+          passed: true
+        });
+      }
     }
     
-    // Check if user has already started the exam
-    let attendance;
+    // Get real attempt count and fix inconsistencies
+    const realAttemptCount = await getRealAttemptCount(examId, userId);
     
     if (newAttempt === 'true') {
       console.log("Creating new attempt as requested");
@@ -269,6 +294,48 @@ const attendExam = async (req, res) => {
         
         await attendance.save();
         console.log(`New attendance record created with ID: ${attendance._id}`);
+
+        // Randomize questions and store in memory
+        const randomizedQuestions = shuffleArray(exam.sections.mcqs);
+        
+        // Initialize user exam data in memory
+        if (!userExamData[userId]) {
+          userExamData[userId] = {};
+        }
+        
+        userExamData[userId][examId] = {
+          randomizedQuestions,
+          userAnswers: {},
+          attemptId: attendance._id,
+          attemptNumber: nextAttemptNumber // Store attempt number in memory
+        };
+        
+        // Also store in the database for persistence
+        try {
+          // Delete any existing temporary data for this attempt number first
+          await TmpExamStudentData.deleteMany({ 
+            userId, 
+            examId, 
+            attemptNumber: nextAttemptNumber 
+          });
+          
+          // Create new temporary data for this attempt
+          const tmpData = new TmpExamStudentData({
+            userId,
+            examId,
+            attemptNumber: nextAttemptNumber,
+            questionIds: randomizedQuestions.map(q => q._id),
+            answers: []
+          });
+          
+          await tmpData.save();
+          console.log("Created temporary data storage with attempt number:", nextAttemptNumber);
+        } catch (tmpError) {
+          console.error("Error saving temporary data:", tmpError);
+          // Continue anyway, as we have the data in memory
+        }
+        
+        console.log("Questions randomized and stored in memory");
       } catch (saveError) {
         console.error("Error saving attendance record:", saveError);
         // Check if it's a duplicate key error
@@ -316,22 +383,6 @@ const attendExam = async (req, res) => {
           throw saveError; // rethrow for the outer catch block
         }
       }
-
-      // Randomize questions and store in memory
-      const randomizedQuestions = shuffleArray(exam.sections.mcqs);
-      
-      // Initialize user exam data
-      if (!userExamData[userId]) {
-        userExamData[userId] = {};
-      }
-      
-      userExamData[userId][examId] = {
-        randomizedQuestions,
-        userAnswers: {},
-        attemptId: attendance._id
-      };
-      
-      console.log("Questions randomized and stored in memory");
     } else {
       console.log("Looking for existing in-progress attempt");
       // Find the latest active attempt
@@ -357,6 +408,48 @@ const attendExam = async (req, res) => {
           
           await attendance.save();
           console.log(`New first attendance record created with ID: ${attendance._id}`);
+          
+          // Randomize questions and store in memory
+          const randomizedQuestions = shuffleArray(exam.sections.mcqs);
+          
+          // Initialize user exam data in memory
+          if (!userExamData[userId]) {
+            userExamData[userId] = {};
+          }
+          
+          userExamData[userId][examId] = {
+            randomizedQuestions,
+            userAnswers: {},
+            attemptId: attendance._id,
+            attemptNumber: 1 // Store attempt number in memory
+          };
+          
+          // Also store in the database for persistence
+          try {
+            // Delete any existing temporary data for first attempt
+            await TmpExamStudentData.deleteMany({ 
+              userId, 
+              examId, 
+              attemptNumber: 1 
+            });
+            
+            // Create new temporary data
+            const tmpData = new TmpExamStudentData({
+              userId,
+              examId,
+              attemptNumber: 1,
+              questionIds: randomizedQuestions.map(q => q._id),
+              answers: []
+            });
+            
+            await tmpData.save();
+            console.log("Created temporary data storage for first attempt");
+          } catch (tmpError) {
+            console.error("Error saving temporary data:", tmpError);
+            // Continue anyway, as we have the data in memory
+          }
+          
+          console.log("Questions randomized and stored in memory for first attempt");
         } catch (saveError) {
           console.error("Error saving first attendance record:", saveError);
           // Check if it's a duplicate key error
@@ -369,30 +462,63 @@ const attendExam = async (req, res) => {
             throw saveError; // rethrow for the outer catch block
           }
         }
-
-        // Randomize questions and store in memory
-        const randomizedQuestions = shuffleArray(exam.sections.mcqs);
-        
-        // Initialize user exam data
-        if (!userExamData[userId]) {
-          userExamData[userId] = {};
-        }
-        
-        userExamData[userId][examId] = {
-          randomizedQuestions,
-          userAnswers: {},
-          attemptId: attendance._id
-        };
-        
-        console.log("Questions randomized and stored in memory for first attempt");
       } else {
         console.log(`Found existing in-progress attempt: ${attendance._id}`);
+        
+        const attemptNumber = attendance.attemptNumber || 1;
         
         if (!userExamData[userId] || !userExamData[userId][examId] || 
                   userExamData[userId][examId].attemptId.toString() !== attendance._id.toString()) {
           console.log("No in-memory data found for existing attempt, reinitializing");
-          // If memory was cleared (server restart) or mismatch in attempt ID
-          const randomizedQuestions = shuffleArray(exam.sections.mcqs);
+          
+          // Try to get existing temporary data from database first
+          let tmpData = await TmpExamStudentData.findOne({ 
+            userId, 
+            examId,
+            attemptNumber
+          });
+          
+          let randomizedQuestions;
+          
+          if (tmpData && tmpData.questionIds && tmpData.questionIds.length > 0) {
+            console.log("Found existing temporary data, using stored question order");
+            // Get the full question objects based on IDs
+            const questionIds = tmpData.questionIds.map(id => id.toString());
+            randomizedQuestions = [];
+            
+            // Map IDs back to question objects
+            exam.sections.mcqs.forEach(q => {
+              const index = questionIds.indexOf(q._id.toString());
+              if (index !== -1) {
+                randomizedQuestions[index] = q;
+              }
+            });
+            
+            // Fill any gaps with questions
+            if (randomizedQuestions.filter(q => q).length < exam.sections.mcqs.length) {
+              randomizedQuestions = shuffleArray(exam.sections.mcqs);
+            }
+          } else {
+            // Generate new random order
+            console.log("No stored question order found, generating new one");
+            randomizedQuestions = shuffleArray(exam.sections.mcqs);
+            
+            // Create temporary data in database
+            try {
+              tmpData = new TmpExamStudentData({
+                userId,
+                examId,
+                attemptNumber,
+                questionIds: randomizedQuestions.map(q => q._id),
+                answers: []
+              });
+              
+              await tmpData.save();
+              console.log(`Created temporary data storage for attempt #${attemptNumber}`);
+            } catch (tmpError) {
+              console.error("Error creating temporary data:", tmpError);
+            }
+          }
           
           // Re-initialize user exam data
           if (!userExamData[userId]) {
@@ -402,8 +528,19 @@ const attendExam = async (req, res) => {
           userExamData[userId][examId] = {
             randomizedQuestions,
             userAnswers: {},
-            attemptId: attendance._id
+            attemptId: attendance._id,
+            attemptNumber: attemptNumber
           };
+          
+          // If we have stored answers, load them into memory
+          if (tmpData && tmpData.answers && tmpData.answers.length > 0) {
+            tmpData.questionIds.forEach((qId, index) => {
+              if (tmpData.answers[index]) {
+                userExamData[userId][examId].userAnswers[qId] = tmpData.answers[index];
+              }
+            });
+            console.log(`Loaded ${Object.keys(userExamData[userId][examId].userAnswers).length} stored answers from database`);
+          }
           
           console.log("Re-initialized question data in memory");
         }
@@ -497,6 +634,9 @@ const submitAnswer = async (req, res) => {
         message: "No active exam session found. Please start the exam first." 
       });
     }
+    
+    const attemptNumber = attendance.attemptNumber || 1;
+    console.log(`Saving answer for attempt #${attemptNumber}`);
 
     // Initialize user exam data if it doesn't exist
     if (!userExamData[userId]) {
@@ -518,12 +658,70 @@ const submitAnswer = async (req, res) => {
       const allQuestionIds = exam.sections.mcqs.map(q => q._id.toString());
       userExamData[userId][examId] = {
         questionSequence: shuffleArray([...allQuestionIds]),
-        userAnswers: {}
+        userAnswers: {},
+        attemptId: attendance._id,
+        attemptNumber: attemptNumber
       };
     }
 
     // Store answer in memory
     userExamData[userId][examId].userAnswers[questionId] = selectedAnswer;
+
+    // Store answer in database for persistence
+    try {
+      // Get temporary data
+      let tmpData = await TmpExamStudentData.findOne({
+        userId,
+        examId,
+        attemptNumber
+      });
+      
+      if (!tmpData) {
+        // Create new temporary data if not exists
+        const exam = await Exam.findById(examId).populate({
+          path: 'sections.mcqs',
+          select: '_id'
+        });
+        
+        if (!exam) {
+          return res.status(404).json({ message: "Exam not found" });
+        }
+        
+        tmpData = new TmpExamStudentData({
+          userId,
+          examId,
+          attemptNumber,
+          questionIds: exam.sections.mcqs.map(q => q._id),
+          answers: []
+        });
+      }
+      
+      // Find the index of the question in the questionIds array
+      const questionIndex = tmpData.questionIds.findIndex(qid => 
+        qid.toString() === questionId.toString()
+      );
+      
+      if (questionIndex >= 0) {
+        // Make sure the answers array is at least as long as needed
+        while (tmpData.answers.length <= questionIndex) {
+          tmpData.answers.push(null);
+        }
+        
+        // Update the answer at the right position
+        tmpData.answers[questionIndex] = selectedAnswer;
+      } else {
+        // If question not found in the sequence (which shouldn't happen), 
+        // add it to the end
+        tmpData.questionIds.push(questionId);
+        tmpData.answers.push(selectedAnswer);
+      }
+      
+      await tmpData.save();
+      console.log(`Saved answer to database for question ${questionId}, attempt #${attemptNumber}`);
+    } catch (tmpError) {
+      console.error("Error saving answer to database:", tmpError);
+      // Continue anyway as we have the answer in memory
+    }
 
     // Update attendance
     attendance.attemptedQuestions = Object.keys(userExamData[userId][examId].userAnswers).length;
@@ -547,77 +745,78 @@ const submitAnswer = async (req, res) => {
 // Complete exam and submit all answers at once
 const completeExam = async (req, res) => {
   try {
-    console.log("Starting exam completion process");
     const { examId } = req.params;
     const userId = req.user._id;
-    const MAX_ATTEMPTS = 2;
+    
+    console.log(`User ${userId} is completing exam ${examId}`);
 
-    // Log important info for debugging
-    console.log(`ExamID: ${examId}, UserID: ${userId}`);
-    
-    // Get submitted answers from request body
-    const { answers } = req.body || {};
-    console.log(`Received answers: ${answers ? Object.keys(answers).length : 0} questions`);
-    
-    // Find attendance record
-    const attendance = await ExamAttendance.findOne({ 
-      examId, 
-      userId, 
-      status: "IN_PROGRESS" 
-    }).sort({ createdAt: -1 });
-    
+    // Find the in-progress attendance record
+    const attendance = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+
     if (!attendance) {
-      console.log("No active exam session found");
-      return res.status(404).json({ message: "No active exam session found" });
+      return res.status(404).json({ message: "No active exam found to complete" });
     }
 
-    console.log(`Found attendance record: ${attendance._id}, status: ${attendance.status}`);
+    const attemptNumber = attendance.attemptNumber || 1;
+    console.log(`Processing completion of attempt #${attemptNumber}`);
 
-    if (attendance.status !== "IN_PROGRESS") {
-      console.log(`Exam is already in status: ${attendance.status}`);
-      return res.status(400).json({ message: "Exam is already completed or timed out" });
-    }
-
-    // Get user details for certificate
-    const user = await User.findById(userId);
-    if (!user) {
-      console.log("User not found");
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Get exam details with correct answers
+    // Get the exam with questions
     const exam = await Exam.findById(examId).populate({
       path: 'sections.mcqs',
-      select: 'questionText options correctAnswer correctOption _id'
+      select: 'questionText options correctAnswer _id'
     });
-    
+
     if (!exam) {
-      console.log("Exam not found");
       return res.status(404).json({ message: "Exam not found" });
     }
 
-    console.log(`Loaded exam: ${exam.title} with ${exam.sections.mcqs.length} questions`);
-
-    // Get user answers from memory or submitted answers
-    let userAnswersMap = {};
-    
-    if (answers && typeof answers === 'object') {
-      // If answers provided in request body, process them
-      userAnswersMap = answers;
-      console.log(`Using ${Object.keys(userAnswersMap).length} answers from request body`);
-    } else if (userExamData[userId] && userExamData[userId][examId]) {
-      // If answers stored in memory
-      userAnswersMap = userExamData[userId][examId].userAnswers;
-      console.log(`Using ${Object.keys(userAnswersMap).length} answers from memory`);
-    } else {
-      console.log("No answers found in request or memory");
-    }
-    
-    // Create a map of questions for quick lookup
-    const questionsMap = {};
-    exam.sections.mcqs.forEach(q => {
-      questionsMap[q._id.toString()] = q;
+    // Get temporary data with question order and answers
+    let tmpData = await TmpExamStudentData.findOne({
+      userId,
+      examId,
+      attemptNumber
     });
+
+    if (!tmpData || !tmpData.questionIds || tmpData.questionIds.length === 0) {
+      console.log("No temporary data found, using memory data if available");
+      // Fall back to memory data if available
+      if (!userExamData[userId] || !userExamData[userId][examId]) {
+        console.log("No memory data available either, cannot score exam");
+        return res.status(400).json({ 
+          message: "Cannot complete exam: no answer data found"
+        });
+      }
+    }
+
+    // Get user answers from temporary data or memory
+    const userAnswersMap = {};
+    
+    // Check if we have answers in temporary data
+    if (tmpData && tmpData.questionIds && tmpData.answers) {
+      for (let i = 0; i < tmpData.questionIds.length; i++) {
+        if (tmpData.answers[i]) {
+          userAnswersMap[tmpData.questionIds[i].toString()] = tmpData.answers[i];
+        }
+      }
+      console.log(`Found ${Object.keys(userAnswersMap).length} answers in temporary data`);
+    }
+    // If no answers in temporary data or not enough, try memory
+    else if (userExamData[userId] && userExamData[userId][examId]) {
+      Object.assign(userAnswersMap, userExamData[userId][examId].userAnswers);
+      console.log(`Found ${Object.keys(userAnswersMap).length} answers in memory`);
+    }
+
+    // Create a map of questions for easy lookup
+    const questionsMap = {};
+    exam.sections.mcqs.forEach(question => {
+      questionsMap[question._id.toString()] = question;
+    });
+
+    console.log("Processing answers and calculating score");
     
     // Process answers and calculate score
     const processedAnswers = [];
@@ -629,10 +828,22 @@ const completeExam = async (req, res) => {
       
       if (question) {
         totalAnswered++;
-        // Check for correct answer using either correctAnswer or correctOption field
-        const correctValue = question.correctOption || question.correctAnswer;
-        const isCorrect = correctValue === selectedAnswer;
-        if (isCorrect) score++;
+        // Always use correctAnswer field from the question model (don't check correctOption)
+        const correctValue = question.correctAnswer;
+        
+        // Add debug logs to see what's happening
+        console.log(`Question ${questionId}:`);
+        console.log(`- Selected answer: "${selectedAnswer}"`);
+        console.log(`- Correct answer: "${correctValue}"`);
+        
+        // Do string comparison and trim to handle whitespace issues
+        const isCorrect = String(correctValue).trim() === String(selectedAnswer).trim();
+        console.log(`- Is correct: ${isCorrect}`);
+        
+        if (isCorrect) {
+          score++;
+          console.log(`- Score increased to ${score}`);
+        }
         
         processedAnswers.push({
           questionId,
@@ -642,139 +853,59 @@ const completeExam = async (req, res) => {
       }
     });
     
-    console.log(`Processed ${processedAnswers.length} answers, score: ${score}/${attendance.totalQuestions}`);
+    // Calculate percentage for pass/fail determination
+    const totalQuestions = exam.sections.mcqs.length;
+    const percentage = totalQuestions > 0 ? (score / totalQuestions) * 100 : 0;
+    const passed = percentage >= 60;
     
-    // Update attendance with answers and score
-    attendance.answers = processedAnswers;
-    attendance.score = score;
-    attendance.attemptedQuestions = totalAnswered;
+    console.log(`Exam results: Score ${score}/${totalQuestions} (${percentage.toFixed(2)}%), ${passed ? 'PASSED' : 'FAILED'}`);
+
+    // Update attendance record with results
     attendance.status = "COMPLETED";
     attendance.endTime = new Date();
+    attendance.score = score;
+    attendance.totalQuestions = totalQuestions;
+    attendance.attemptedQuestions = totalAnswered;
+    attendance.answers = processedAnswers;
     
     await attendance.save();
-    console.log("Updated attendance record with results");
-    
-    // Clean up memory
-    if (userExamData[userId] && userExamData[userId][examId]) {
-      delete userExamData[userId][examId];
-      console.log("Cleaned up memory storage");
-    }
-    
-    // Calculate percentage
-    const percentage = (score / attendance.totalQuestions) * 100;
-    const passed = percentage >= 60; // Pass threshold is 60%
-    console.log(`Final score: ${percentage.toFixed(2)}%, Result: ${passed ? "PASS" : "FAIL"}`);
+    console.log("Attendance record updated with results");
 
+    // Generate certificate if passed
     let certificateInfo = null;
-    let certificatePath = null;
-
-    // Only generate certificate if score is at least 60%
+    let emailSent = false;
+    
     if (passed) {
       try {
-        console.log("Generating certificate...");
-        // Current date in DD/MM/YYYY format
-        const dateOfIssue = new Date().toLocaleDateString('en-GB', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric'
-        });
-
-        // Call certificate generator with all required data
-        certificateInfo = await generateCertificate({
-          name: user.username || `${user.firstName} ${user.lastName}`,
-          directorName: "TechOnquer Director",
-          dateOfIssue,
-          email: user.email,
-          // Add additional exam info
-          examTitle: exam.title,
-          score: `${score}/${attendance.totalQuestions} (${percentage.toFixed(2)}%)`,
-          passed: true
-        });
-
-        // Store certificate path for email attachment
-        certificatePath = certificateInfo.certificatePath;
-        console.log(`Certificate generated: ${certificateInfo.certificateId}`);
-
-        // Send certificate via email if generated
-        if (certificatePath) {
-          console.log("Preparing to send certificate email");
-          const emailSubject = `Congratulations! Your Certificate for ${exam.title}`;
-          const emailHtml = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h1 style="color: #4a86e8;">Congratulations, ${user.firstName || user.username}!</h1>
-              <p>You have successfully completed the exam: <strong>${exam.title}</strong></p>
-              
-              <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h3 style="margin-top: 0;">Your Results:</h3>
-                <p><strong>Score:</strong> ${score}/${attendance.totalQuestions}</p>
-                <p><strong>Percentage:</strong> ${percentage.toFixed(2)}%</p>
-                <p><strong>Status:</strong> <span style="color: green; font-weight: bold;">PASSED</span></p>
-                <p><strong>Attempt:</strong> ${attendance.attemptNumber} of ${MAX_ATTEMPTS}</p>
-              </div>
-              
-              <p>Your certificate is attached to this email. You can also access your results and certificate from your account dashboard.</p>
-              
-              <p>We appreciate your dedication to learning!</p>
-              
-              <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777;">
-                <p>This is an automated message from TechOnquer Exam Portal. Please do not reply to this email.</p>
-              </div>
-            </div>
-          `;
-
-          // Send email with certificate
-          await sendCertificateEmail({
-            email: user.email,
-            subject: emailSubject,
-            name: user.firstName || user.username,
-            certificateId: certificateInfo.certificateId,
-            examTitle: exam.title,
-            passed: true,
-            certificatePath: certificatePath
-          });
+        console.log("User passed the exam, generating certificate");
+        
+        certificateInfo = await generateCertificate(userId, examId, attendance._id, score, totalQuestions);
+        
+        if (certificateInfo) {
+          console.log(`Certificate generated with ID: ${certificateInfo.certificateId}`);
           
-          console.log(`Certificate email sent to ${user.email}`);
+          // Try to send certificate email
+          try {
+            await sendCertificateEmail(
+              req.user.email,
+              req.user.firstName || req.user.username,
+              exam.title,
+              `${percentage.toFixed(2)}%`,
+              certificateInfo.certificateId
+            );
+            emailSent = true;
+            console.log("Certificate email sent successfully");
+          } catch (emailError) {
+            console.error("Error sending certificate email:", emailError);
+            // Continue anyway, user can download certificate later
+          }
         }
       } catch (certError) {
-        console.error("Error generating or sending certificate:", certError);
-        // Continue execution - don't fail the exam completion if certificate fails
+        console.error("Error generating certificate:", certError);
+        // Continue anyway, we'll return the exam results
       }
     } else {
-      // Send failure notification if user didn't pass
-      try {
-        console.log("Preparing to send failure notification email");
-        const emailSubject = `Exam Results: ${exam.title}`;
-        const emailHtml = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #4a86e8;">Exam Results</h1>
-            <p>Hello ${user.firstName || user.username},</p>
-            <p>You have completed the exam: <strong>${exam.title}</strong></p>
-            
-            <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-              <h3 style="margin-top: 0;">Your Results:</h3>
-              <p><strong>Score:</strong> ${score}/${attendance.totalQuestions}</p>
-              <p><strong>Percentage:</strong> ${percentage.toFixed(2)}%</p>
-              <p><strong>Status:</strong> <span style="color: #e74c3c; font-weight: bold;">NOT PASSED</span></p>
-              <p><strong>Attempt:</strong> ${attendance.attemptNumber} of ${MAX_ATTEMPTS}</p>
-            </div>
-            
-            <p>${attendance.attemptNumber < MAX_ATTEMPTS ? 
-              'You can try the exam again to improve your score.' : 
-              'You have reached the maximum number of attempts for this exam.'}</p>
-            
-            <p>Keep learning and improving!</p>
-            
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777;">
-              <p>This is an automated message from TechOnquer Exam Portal. Please do not reply to this email.</p>
-            </div>
-          </div>
-        `;
-
-        await mailSender(user.email, emailSubject, emailHtml);
-        console.log(`Exam results email sent to ${user.email}`);
-      } catch (emailError) {
-        console.error("Error sending results email:", emailError);
-      }
+      console.log("User did not pass the exam, no certificate generated");
     }
 
     console.log("Preparing final response");
@@ -789,7 +920,7 @@ const completeExam = async (req, res) => {
       result: passed ? "pass" : "failed",
       certificateGenerated: certificateInfo ? "yes" : "no",
       certificateId: certificateInfo?.certificateId || null,
-      emailSent: true
+      emailSent: emailSent
     });
 
   } catch (error) {
@@ -883,70 +1014,133 @@ const getExamResult = async (req, res) => {
 const reviewExamQuestions = async (req, res) => {
   try {
     const { examId } = req.params;
+    const { attemptNumber } = req.query; // Get attempt number from query params
     const userId = req.user._id;
     
-    // Get user's attendance record
-    const attendance = await ExamAttendance.findOne({ 
+    // Find the specific attendance record based on attempt number if provided
+    const query = { 
       examId, 
       userId,
-      status: 'completed' 
-    });
+      status: { $in: ["COMPLETED", "TIMED_OUT"] } // Only review completed or timed out exams
+    };
+    
+    if (attemptNumber) {
+      query.attemptNumber = parseInt(attemptNumber);
+    }
+    
+    // Get user's attendance record - get the most recent one if attempt number not specified
+    const attendance = await ExamAttendance.findOne(query)
+      .sort({ attemptNumber: attemptNumber ? 1 : -1 }); // Sort by newest if attempt not specified
     
     if (!attendance) {
       return res.status(404).json({ message: "Exam attendance record not found or exam not completed" });
     }
     
-    // Get temporary exam data with randomized questions
-    const tmpData = await TmpExamStudentData.findOne({ userId, examId });
+    console.log(`Reviewing exam ${examId}, attempt #${attendance.attemptNumber}`);
     
-    if (!tmpData) {
-      return res.status(404).json({ message: "Temporary exam data not found" });
-    }
+    // Get temporary exam data with randomized questions for this specific attempt
+    const tmpData = await TmpExamStudentData.findOne({ 
+      userId, 
+      examId,
+      attemptNumber: attendance.attemptNumber
+    });
     
     // Get exam with all questions
     const exam = await Exam.findById(examId).populate({
       path: 'sections.mcqs',
-      select: 'questionText options correctOption explanation'
+      select: 'questionText options correctAnswer explanation'
     });
     
-    // Map questions with user answers based on questionIds in tmpData
-    const reviewData = [];
+    if (!exam) {
+      return res.status(404).json({ message: "Exam not found" });
+    }
     
-    for (let i = 0; i < tmpData.questionIds.length; i++) {
-      const questionId = tmpData.questionIds[i];
-      const userAnswer = tmpData.answers[i];
+    // If we have temporary data with question order and answers, use it
+    if (tmpData && tmpData.questionIds && tmpData.questionIds.length > 0) {
+      console.log(`Found temporary data for attempt #${attendance.attemptNumber} with ${tmpData.questionIds.length} questions`);
       
-      // Find question details
-      let questionDetails = null;
-      exam.sections.forEach(section => {
-        section.mcqs.forEach(mcq => {
+      // Map questions with user answers based on questionIds in tmpData
+      const reviewData = [];
+      
+      for (let i = 0; i < tmpData.questionIds.length; i++) {
+        const questionId = tmpData.questionIds[i];
+        const userAnswer = tmpData.answers[i];
+        
+        // Find question details
+        let questionDetails = null;
+        exam.sections.mcqs.forEach(mcq => {
           if (mcq._id.toString() === questionId.toString()) {
             questionDetails = mcq;
           }
         });
+        
+        if (questionDetails) {
+          reviewData.push({
+            questionId: questionDetails._id,
+            questionText: questionDetails.questionText,
+            options: questionDetails.options,
+            userAnswer: userAnswer,
+            correctAnswer: questionDetails.correctAnswer,
+            isCorrect: userAnswer === questionDetails.correctAnswer,
+            explanation: questionDetails.explanation || "No explanation provided"
+          });
+        }
+      }
+      
+      return res.status(200).json({
+        examTitle: exam.title,
+        attemptNumber: attendance.attemptNumber,
+        totalQuestions: reviewData.length,
+        correctAnswers: reviewData.filter(q => q.isCorrect).length,
+        score: attendance.score,
+        percentage: ((attendance.score / attendance.totalQuestions) * 100).toFixed(2),
+        passed: ((attendance.score / attendance.totalQuestions) * 100) >= 60,
+        reviewData: reviewData
+      });
+    } else {
+      // If no temporary data found, use the attendance record answers
+      console.log("No temporary data found, using attendance record answers");
+      
+      // Get questions from attendance answers
+      const reviewData = [];
+      
+      // Create a map of all questions for quick lookup
+      const questionsMap = {};
+      exam.sections.mcqs.forEach(mcq => {
+        questionsMap[mcq._id.toString()] = mcq;
       });
       
-      if (questionDetails) {
-        reviewData.push({
-          questionId: questionDetails._id,
-          questionText: questionDetails.questionText,
-          options: questionDetails.options,
-          userAnswer: userAnswer,
-          correctAnswer: questionDetails.correctOption,
-          isCorrect: userAnswer === questionDetails.correctOption,
-          explanation: questionDetails.explanation || "No explanation provided"
-        });
-      }
+      // Map the answers from attendance record
+      attendance.answers.forEach(answer => {
+        const questionId = answer.questionId.toString();
+        const questionDetails = questionsMap[questionId];
+        
+        if (questionDetails) {
+          reviewData.push({
+            questionId: questionDetails._id,
+            questionText: questionDetails.questionText,
+            options: questionDetails.options,
+            userAnswer: answer.selectedAnswer,
+            correctAnswer: questionDetails.correctAnswer,
+            isCorrect: answer.isCorrect,
+            explanation: questionDetails.explanation || "No explanation provided"
+          });
+        }
+      });
+      
+      return res.status(200).json({
+        examTitle: exam.title,
+        attemptNumber: attendance.attemptNumber,
+        totalQuestions: attendance.totalQuestions,
+        correctAnswers: attendance.score,
+        score: attendance.score,
+        percentage: ((attendance.score / attendance.totalQuestions) * 100).toFixed(2),
+        passed: ((attendance.score / attendance.totalQuestions) * 100) >= 60,
+        reviewData: reviewData
+      });
     }
-    
-    res.status(200).json({
-      examTitle: exam.title,
-      totalQuestions: reviewData.length,
-      correctAnswers: reviewData.filter(q => q.isCorrect).length,
-      reviewData: reviewData
-    });
-    
   } catch (error) {
+    console.error("Error in reviewExamQuestions:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 
@@ -958,7 +1152,8 @@ const reviewExamQuestions = async (req, res) => {
 const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { statusFilter, search, sort = 'recent' } = req.query;
+    const { statusFilter, search, sort = 'recent', showAll = 'false' } = req.query;
+    const MAX_ATTEMPTS = 2;
     
     // Build the query based on filters
     const query = { userId };
@@ -1015,7 +1210,9 @@ const getUserExams = async (req, res) => {
           bestAttemptNumber: 0,
           hasPassed: false,
           latestAttemptDate: attendance.startTime,
-          attempts: []
+          attempts: [],
+          completedAttempts: 0,
+          shouldHide: false // Will be set to true for passed or maxed attempts
         };
       }
       
@@ -1026,6 +1223,11 @@ const getUserExams = async (req, res) => {
       
       // Determine if the user passed (60% is passing threshold)
       const passed = parseFloat(percentage) >= 60;
+      
+      // Count completed attempts
+      if (attendance.status === 'COMPLETED' || attendance.status === 'TIMED_OUT') {
+        examMap[examId].completedAttempts++;
+      }
       
       // Update best score if this attempt is better
       if (passed && parseFloat(percentage) > parseFloat(examMap[examId].bestPercentage)) {
@@ -1080,14 +1282,29 @@ const getUserExams = async (req, res) => {
       });
     });
     
-    // Apply passed/failed filter (needs to be done after processing)
+    // Determine which exams should be hidden (passed or max attempts reached)
+    // and mark them accordingly
+    Object.values(examMap).forEach(exam => {
+      if (exam.hasPassed || exam.completedAttempts >= MAX_ATTEMPTS) {
+        exam.shouldHide = true;
+      }
+    });
+    
+    // Apply filters and hiding logic
     let filteredExams = Object.values(examMap);
+    
+    // Apply passed/failed filter
     if (statusFilter === 'passed') {
       filteredExams = filteredExams.filter(exam => exam.hasPassed);
     } else if (statusFilter === 'failed') {
       filteredExams = filteredExams.filter(exam => 
         exam.attempts.some(a => a.status === 'COMPLETED' || a.status === 'TIMED_OUT') && !exam.hasPassed
       );
+    }
+    
+    // If not showing all exams, hide passed or max attempts reached
+    if (showAll !== 'true') {
+      filteredExams = filteredExams.filter(exam => !exam.shouldHide);
     }
     
     // Sort exams based on sort parameter
@@ -1102,13 +1319,17 @@ const getUserExams = async (req, res) => {
     // Sort attempts within each exam by most recent first
     filteredExams.forEach(exam => {
       exam.attempts.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+      
+      // Add remaining attempts info
+      exam.remainingAttempts = Math.max(0, MAX_ATTEMPTS - exam.completedAttempts);
+      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < MAX_ATTEMPTS;
     });
     
     // Prepare summary stats
     const totalExams = filteredExams.length;
     const totalAttempts = filteredExams.reduce((sum, exam) => sum + exam.attempts.length, 0);
     const completedAttempts = filteredExams.reduce((sum, exam) => 
-      sum + exam.attempts.filter(a => a.status === 'COMPLETED').length, 0);
+      sum + exam.attempts.filter(a => a.status === 'COMPLETED' || a.status === 'TIMED_OUT').length, 0);
     const passedExams = filteredExams.filter(exam => exam.hasPassed).length;
     
     res.status(200).json({
@@ -1118,7 +1339,9 @@ const getUserExams = async (req, res) => {
         totalAttempts,
         completedAttempts,
         passedExams,
-        passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%'
+        passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%',
+        hiddenExams: Object.values(examMap).filter(exam => exam.shouldHide).length,
+        showAll: showAll === 'true'
       },
       exams: filteredExams
     });
