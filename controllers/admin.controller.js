@@ -366,11 +366,145 @@ const getExamPassFailStats = async (req, res) => {
   }
 };
 
+// Get all currently active exam sessions (in-progress exams)
+const getActiveExams = async (req, res) => {
+  try {
+    // Optional filters
+    const { examId, search, page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Build filter for active exams (status = IN_PROGRESS)
+    let filter = { status: "IN_PROGRESS" };
+    
+    // Add exam filter if provided
+    if (examId) filter.examId = examId;
+    
+    // Find active exam sessions with populated details
+    const activeExams = await ExamAttendance.find(filter)
+      .populate({
+        path: 'examId',
+        select: 'title description duration'
+      })
+      .populate({
+        path: 'userId',
+        select: 'username firstName lastName email'
+      })
+      .sort({ startTime: -1 }) // Most recently started first
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Count total for pagination
+    const total = await ExamAttendance.countDocuments(filter);
+    
+    // If text search is provided, filter results in memory
+    let filteredExams = activeExams;
+    if (search && search.trim() !== '') {
+      const searchLower = search.toLowerCase();
+      filteredExams = activeExams.filter(exam => {
+        const examTitle = exam.examId?.title?.toLowerCase() || '';
+        const username = exam.userId?.username?.toLowerCase() || '';
+        const firstName = exam.userId?.firstName?.toLowerCase() || '';
+        const lastName = exam.userId?.lastName?.toLowerCase() || '';
+        const email = exam.userId?.email?.toLowerCase() || '';
+        
+        return examTitle.includes(searchLower) ||
+               username.includes(searchLower) ||
+               firstName.includes(searchLower) ||
+               lastName.includes(searchLower) ||
+               email.includes(searchLower);
+      });
+    }
+    
+    // Calculate time elapsed and remaining for each session
+    const activeSessionsData = filteredExams.map(session => {
+      const startTime = new Date(session.startTime);
+      const currentTime = new Date();
+      const elapsedMinutes = Math.round((currentTime - startTime) / 60000);
+      
+      // Calculate remaining time based on exam duration
+      const examDuration = session.examId?.duration || 0;
+      const remainingMinutes = Math.max(0, examDuration - elapsedMinutes);
+      
+      // Format user details
+      const user = session.userId || { username: 'Unknown' };
+      const userName = user.firstName && user.lastName 
+        ? `${user.firstName} ${user.lastName}` 
+        : user.username;
+      
+      return {
+        sessionId: session._id,
+        exam: {
+          id: session.examId?._id || 'Unknown',
+          title: session.examId?.title || 'Unknown Exam',
+          description: session.examId?.description || '',
+          duration: examDuration
+        },
+        user: {
+          id: user._id || 'Unknown',
+          name: userName,
+          username: user.username || 'Unknown',
+          email: user.email || 'Unknown'
+        },
+        startTime: session.startTime,
+        elapsedTime: `${elapsedMinutes} min`,
+        remainingTime: `${remainingMinutes} min`,
+        progress: {
+          attemptedQuestions: session.attemptedQuestions,
+          totalQuestions: session.totalQuestions,
+          percentComplete: session.totalQuestions > 0 
+            ? Math.round((session.attemptedQuestions / session.totalQuestions) * 100) 
+            : 0
+        },
+        attemptNumber: session.attemptNumber || 1,
+        timeStatus: remainingMinutes < 5 ? 'critical' : 
+                   remainingMinutes < 15 ? 'warning' : 'normal'
+      };
+    });
+    
+    // Group by exam for summary statistics
+    const examSummary = {};
+    activeExams.forEach(session => {
+      const examId = session.examId?._id?.toString() || 'unknown';
+      const examTitle = session.examId?.title || 'Unknown Exam';
+      
+      if (!examSummary[examId]) {
+        examSummary[examId] = {
+          examId: examId,
+          title: examTitle,
+          activeSessions: 0
+        };
+      }
+      
+      examSummary[examId].activeSessions++;
+    });
+    
+    res.status(200).json({
+      message: "Active exam sessions retrieved successfully",
+      totalActive: total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(total / parseInt(limit)),
+      count: filteredExams.length,
+      examSummary: Object.values(examSummary),
+      activeSessions: activeSessionsData
+    });
+    
+  } catch (error) {
+    console.error("Error retrieving active exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 module.exports = { 
   manageMachines, 
   getUserResults, 
   modifyExamSettings,
   getAllExamHistory,
   getUserExamHistory,
-  getExamPassFailStats
+  getExamPassFailStats,
+  getActiveExams
 };

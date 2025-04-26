@@ -8,17 +8,36 @@ const {
   getExamStatus,
   getExamResult,
   reviewExamQuestions,
-  getUserExams
+  getUserExams,
+  myExamHistory
 } = require("../controllers/examAttendance.controller");
 const { downloadCertificate } = require("../controllers/certificate.controller");
+
+// Helper function to get user-friendly status display
+function getStatusDisplay(status) {
+  switch(status) {
+    case 'IN_PROGRESS': return 'In Progress';
+    case 'COMPLETED': return 'Completed';
+    case 'TIMED_OUT': return 'Timed Out';
+    default: return status;
+  }
+}
 
 // Fallback function for missing implementations
 const fallback = (methodName) => (req, res) => 
   res.status(501).json({ message: `${methodName} not implemented yet` });
 
-// Get user's exam history
-router.get("/my-exams", authenticateUser, 
-  getUserExams ? getUserExams : fallback("getUserExams"));
+// Get user's exam history with optional filtering
+router.get("/my-exams", authenticateUser, getUserExams);
+
+// Get user's enhanced exam history with better formatting and statistics
+router.get("/my-exam-history", authenticateUser, myExamHistory);
+
+// Get user's exam history filtered by status
+router.get("/my-exams/:status", authenticateUser, (req, res) => {
+  req.query.statusFilter = req.params.status;
+  getUserExams(req, res);
+});
 
 // Normal users can attend, submit answers, and complete exams
 router.get("/:examId/attend", authenticateUser, 

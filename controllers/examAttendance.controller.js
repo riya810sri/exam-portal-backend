@@ -1,3 +1,12 @@
+// Helper function to get user-friendly status display
+function getStatusDisplay(status) {
+  switch(status) {
+    case 'IN_PROGRESS': return 'In Progress';
+    case 'COMPLETED': return 'Completed';
+    case 'TIMED_OUT': return 'Timed Out';
+    default: return status;
+  }
+}
 const Exam = require("../models/exam.model");
 const ExamAttendance = require("../models/examAttendance.model");
 const Question = require("../models/question.model");
@@ -949,9 +958,22 @@ const reviewExamQuestions = async (req, res) => {
 const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
+    const { statusFilter, search, sort = 'recent' } = req.query;
+    
+    // Build the query based on filters
+    const query = { userId };
+    
+    // Apply status filter if provided
+    if (statusFilter) {
+      if (['passed', 'failed'].includes(statusFilter)) {
+        // Handle passed/failed status (requires post-filtering)
+      } else if (['IN_PROGRESS', 'COMPLETED', 'TIMED_OUT'].includes(statusFilter)) {
+        query.status = statusFilter;
+      }
+    }
     
     // Find all exam attendances for this user
-    const examAttendances = await ExamAttendance.find({ userId })
+    const examAttendances = await ExamAttendance.find(query)
       .populate({
         path: 'examId',
         select: 'title description duration status publishedAt',
@@ -964,43 +986,362 @@ const getUserExams = async (req, res) => {
         exams: [] 
       });
     }
+
+    // Group exams by their ID to show multiple attempts together
+    const examMap = {};
     
-    // Format the response
-    const userExams = examAttendances.map(attendance => {
+    examAttendances.forEach(attendance => {
+      const examId = attendance.examId?._id?.toString() || 'unknown';
+      
+      if (!examId || examId === 'unknown' || !attendance.examId) {
+        // Skip entries with missing exam data
+        return;
+      }
+      
+      // Filter by search term if provided
+      if (search && attendance.examId.title && 
+          !attendance.examId.title.toLowerCase().includes(search.toLowerCase())) {
+        return; // Skip this exam if it doesn't match the search term
+      }
+      
+      if (!examMap[examId]) {
+        examMap[examId] = {
+          examId: examId,
+          examTitle: attendance.examId.title || 'Unknown Exam',
+          examDescription: attendance.examId.description || '',
+          examDuration: attendance.examId.duration || 0,
+          bestScore: 0,
+          bestPercentage: '0.00',
+          bestAttemptNumber: 0,
+          hasPassed: false,
+          latestAttemptDate: attendance.startTime,
+          attempts: []
+        };
+      }
+      
       // Calculate percentage
       const percentage = attendance.totalQuestions > 0 
         ? ((attendance.score / attendance.totalQuestions) * 100).toFixed(2) 
-        : 0;
+        : '0.00';
       
       // Determine if the user passed (60% is passing threshold)
       const passed = parseFloat(percentage) >= 60;
       
-      return {
+      // Update best score if this attempt is better
+      if (passed && parseFloat(percentage) > parseFloat(examMap[examId].bestPercentage)) {
+        examMap[examId].bestScore = attendance.score;
+        examMap[examId].bestPercentage = percentage;
+        examMap[examId].bestAttemptNumber = attendance.attemptNumber || 1;
+        examMap[examId].hasPassed = true;
+      }
+      
+      // Update latest attempt date
+      if (new Date(attendance.startTime) > new Date(examMap[examId].latestAttemptDate)) {
+        examMap[examId].latestAttemptDate = attendance.startTime;
+      }
+      
+      // Format timestamp for better readability
+      const startDate = new Date(attendance.startTime);
+      const formattedStartTime = startDate.toLocaleDateString() + ' ' + 
+                                startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      let formattedEndTime = 'N/A';
+      if (attendance.endTime) {
+        const endDate = new Date(attendance.endTime);
+        formattedEndTime = endDate.toLocaleDateString() + ' ' + 
+                          endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      
+      // Calculate duration in minutes (if completed)
+      let attemptDuration = 'N/A';
+      if (attendance.endTime && attendance.status !== 'IN_PROGRESS') {
+        const durationMs = new Date(attendance.endTime) - new Date(attendance.startTime);
+        const durationMin = Math.round(durationMs / 60000);
+        attemptDuration = `${durationMin} min`;
+      }
+      
+      // Add this attempt to the exam's attempts array
+      examMap[examId].attempts.push({
         attendanceId: attendance._id,
-        examId: attendance.examId._id,
-        examTitle: attendance.examId.title,
-        examDescription: attendance.examId.description,
+        attemptNumber: attendance.attemptNumber || 1,
         startTime: attendance.startTime,
         endTime: attendance.endTime,
+        formattedStartTime,
+        formattedEndTime,
+        attemptDuration,
         status: attendance.status,
+        statusDisplay: getStatusDisplay(attendance.status),
         score: attendance.score,
         totalQuestions: attendance.totalQuestions,
         attemptedQuestions: attendance.attemptedQuestions,
         percentage: percentage,
         passed: passed,
-        duration: attendance.examId.duration,
-        attemptNumber: attendance.attemptNumber || 1
-      };
+        resultDisplay: passed ? 'PASSED' : (attendance.status === 'IN_PROGRESS' ? 'IN PROGRESS' : 'NOT PASSED')
+      });
     });
+    
+    // Apply passed/failed filter (needs to be done after processing)
+    let filteredExams = Object.values(examMap);
+    if (statusFilter === 'passed') {
+      filteredExams = filteredExams.filter(exam => exam.hasPassed);
+    } else if (statusFilter === 'failed') {
+      filteredExams = filteredExams.filter(exam => 
+        exam.attempts.some(a => a.status === 'COMPLETED' || a.status === 'TIMED_OUT') && !exam.hasPassed
+      );
+    }
+    
+    // Sort exams based on sort parameter
+    if (sort === 'recent') {
+      filteredExams.sort((a, b) => new Date(b.latestAttemptDate) - new Date(a.latestAttemptDate));
+    } else if (sort === 'best') {
+      filteredExams.sort((a, b) => parseFloat(b.bestPercentage) - parseFloat(a.bestPercentage));
+    } else if (sort === 'title') {
+      filteredExams.sort((a, b) => a.examTitle.localeCompare(b.examTitle));
+    }
+    
+    // Sort attempts within each exam by most recent first
+    filteredExams.forEach(exam => {
+      exam.attempts.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+    });
+    
+    // Prepare summary stats
+    const totalExams = filteredExams.length;
+    const totalAttempts = filteredExams.reduce((sum, exam) => sum + exam.attempts.length, 0);
+    const completedAttempts = filteredExams.reduce((sum, exam) => 
+      sum + exam.attempts.filter(a => a.status === 'COMPLETED').length, 0);
+    const passedExams = filteredExams.filter(exam => exam.hasPassed).length;
     
     res.status(200).json({
       message: "Exam history retrieved successfully",
-      count: userExams.length,
-      exams: userExams
+      summary: {
+        totalExams,
+        totalAttempts,
+        completedAttempts,
+        passedExams,
+        passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%'
+      },
+      exams: filteredExams
     });
     
   } catch (error) {
     console.error("Error retrieving user exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// Get user's exam history with detailed information and statistics
+const myExamHistory = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { status, search, sort = 'recent' } = req.query;
+    
+    // Get user details to personalize the response
+    const user = await User.findById(userId).select('username firstName lastName email');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Find all exams the user has attended
+    const examAttendances = await ExamAttendance.find({ userId })
+      .populate({
+        path: 'examId',
+        select: 'title description duration status publishedAt',
+      })
+      .sort({ startTime: -1 });
+    
+    if (!examAttendances || examAttendances.length === 0) {
+      return res.status(200).json({ 
+        message: "You haven't taken any exams yet",
+        user: {
+          username: user.username,
+          name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.username
+        },
+        summary: {
+          totalExams: 0,
+          totalAttempts: 0,
+          completedExams: 0,
+          passedExams: 0,
+          passRate: "0%"
+        },
+        exams: []
+      });
+    }
+
+    // Group exams by their ID to organize multiple attempts
+    const examMap = {};
+    let totalCompletedAttempts = 0;
+    let totalPassedAttempts = 0;
+    
+    examAttendances.forEach(attendance => {
+      if (!attendance.examId) return; // Skip if exam was deleted
+      
+      const examId = attendance.examId._id.toString();
+      
+      // Apply search filter if provided
+      if (search && !attendance.examId.title.toLowerCase().includes(search.toLowerCase())) {
+        return;
+      }
+      
+      // Apply status filter if provided
+      if (status) {
+        if (status === 'passed' && !(attendance.score / attendance.totalQuestions >= 0.6)) {
+          return;
+        } else if (status === 'failed' && (attendance.score / attendance.totalQuestions >= 0.6)) {
+          return;
+        } else if (status !== 'all' && attendance.status !== status) {
+          return;
+        }
+      }
+      
+      // Count completed and passed attempts
+      if (attendance.status === 'COMPLETED') {
+        totalCompletedAttempts++;
+        if (attendance.score / attendance.totalQuestions >= 0.6) {
+          totalPassedAttempts++;
+        }
+      }
+      
+      if (!examMap[examId]) {
+        examMap[examId] = {
+          examId: examId,
+          title: attendance.examId.title,
+          description: attendance.examId.description || '',
+          duration: attendance.examId.duration || 0,
+          bestScore: 0,
+          bestPercentage: 0,
+          attempts: [],
+          latestAttemptDate: attendance.startTime,
+          hasPassed: false
+        };
+      }
+      
+      // Calculate percentage score
+      const percentage = attendance.totalQuestions > 0 
+        ? (attendance.score / attendance.totalQuestions) * 100 
+        : 0;
+      
+      // Update best score if this attempt is better
+      if (percentage > examMap[examId].bestPercentage) {
+        examMap[examId].bestScore = attendance.score;
+        examMap[examId].bestPercentage = percentage;
+        examMap[examId].hasPassed = percentage >= 60;
+      }
+      
+      // Update latest attempt date if this is more recent
+      if (new Date(attendance.startTime) > new Date(examMap[examId].latestAttemptDate)) {
+        examMap[examId].latestAttemptDate = attendance.startTime;
+      }
+      
+      // Format dates for better readability
+      const startDate = new Date(attendance.startTime);
+      const formattedStartDate = startDate.toLocaleDateString('en-GB');
+      const formattedStartTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      let formattedEndDate = 'N/A';
+      let formattedEndTime = 'N/A';
+      let attemptDuration = 'N/A';
+      
+      if (attendance.endTime) {
+        const endDate = new Date(attendance.endTime);
+        formattedEndDate = endDate.toLocaleDateString('en-GB');
+        formattedEndTime = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        // Calculate duration in minutes
+        const durationMinutes = Math.round((endDate - startDate) / 60000);
+        attemptDuration = durationMinutes <= 60 
+          ? `${durationMinutes} minutes` 
+          : `${Math.floor(durationMinutes / 60)} hr ${durationMinutes % 60} min`;
+      }
+      
+      // Add this attempt to the exam's attempts array
+      examMap[examId].attempts.push({
+        attendanceId: attendance._id,
+        attemptNumber: attendance.attemptNumber || 1,
+        startDate: formattedStartDate,
+        startTime: formattedStartTime, 
+        endDate: formattedEndDate,
+        endTime: formattedEndTime,
+        duration: attemptDuration,
+        status: attendance.status,
+        statusText: getStatusDisplay(attendance.status),
+        score: attendance.score,
+        totalQuestions: attendance.totalQuestions,
+        attemptedQuestions: attendance.attemptedQuestions,
+        percentage: percentage.toFixed(2),
+        isPassed: percentage >= 60,
+        result: percentage >= 60 ? 'PASSED' : 
+          (attendance.status === 'IN_PROGRESS' ? 'IN PROGRESS' : 'NOT PASSED'),
+        canContinue: attendance.status === 'IN_PROGRESS',
+        canViewResults: attendance.status !== 'IN_PROGRESS'
+      });
+    });
+    
+    // Convert the map to an array of exams
+    let exams = Object.values(examMap);
+    
+    // Apply sorting
+    if (sort === 'recent') {
+      exams.sort((a, b) => new Date(b.latestAttemptDate) - new Date(a.latestAttemptDate));
+    } else if (sort === 'score') {
+      exams.sort((a, b) => b.bestPercentage - a.bestPercentage);
+    } else if (sort === 'title') {
+      exams.sort((a, b) => a.title.localeCompare(b.title));
+    }
+    
+    // Sort attempts within each exam by most recent first
+    exams.forEach(exam => {
+      exam.attempts.sort((a, b) => b.attemptNumber - a.attemptNumber);
+      exam.formattedBestScore = `${exam.bestScore}/${exam.attempts[0].totalQuestions} (${exam.bestPercentage.toFixed(2)}%)`;
+    });
+    
+    // Build summary statistics
+    const totalUniqueExams = exams.length;
+    const totalAttempts = examAttendances.length;
+    const passedExams = exams.filter(exam => exam.hasPassed).length;
+    const passRate = totalUniqueExams > 0 
+      ? ((passedExams / totalUniqueExams) * 100).toFixed(1) + '%'
+      : '0%';
+    
+    // Return formatted response
+    res.status(200).json({
+      message: "Exam history retrieved successfully",
+      user: {
+        username: user.username,
+        name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.username,
+        email: user.email
+      },
+      summary: {
+        totalExams: totalUniqueExams,
+        totalAttempts,
+        completedExams: exams.filter(exam => 
+          exam.attempts.some(a => a.status === 'COMPLETED' || a.status === 'TIMED_OUT')
+        ).length,
+        passedExams,
+        passRate,
+        averageScore: totalCompletedAttempts > 0 
+          ? (totalPassedAttempts / totalCompletedAttempts * 100).toFixed(1) + '%'
+          : '0%'
+      },
+      exams: exams,
+      filters: {
+        available: {
+          status: ['all', 'IN_PROGRESS', 'COMPLETED', 'TIMED_OUT', 'passed', 'failed'],
+          sort: ['recent', 'score', 'title']
+        },
+        applied: {
+          status: status || 'all',
+          sort: sort || 'recent',
+          search: search || ''
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error retrieving exam history:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message,
@@ -1016,5 +1357,6 @@ module.exports = {
   getExamStatus,
   getExamResult,
   reviewExamQuestions,
-  getUserExams
+  getUserExams,
+  myExamHistory
 };

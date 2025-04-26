@@ -9,7 +9,8 @@ const {
   getAllExamHistory,
   getUserExamHistory,
   manageMachines,
-  getExamPassFailStats
+  getExamPassFailStats,
+  getActiveExams
 } = require("../controllers/admin.controller");
 const { updateExam } = require("../controllers/exams.controller");
 const { deleteQuestion } = require("../controllers/questions.controller");
@@ -76,6 +77,10 @@ router.get("/exam-history",
 
 router.get("/exam-history/user/:userId", 
   typeof getUserExamHistory === 'function' ? getUserExamHistory : fallbackFunction("getUserExamHistory"));
+
+// Active exams monitoring
+router.get("/active-exams", 
+  typeof getActiveExams === 'function' ? getActiveExams : fallbackFunction("getActiveExams"));
 
 // Get pass/fail statistics for a specific exam
 router.get("/exam/:examId/stats", 
