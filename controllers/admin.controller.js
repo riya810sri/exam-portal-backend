@@ -2,6 +2,7 @@ const Exam = require("../models/exam.model");
 const Question = require("../models/question.model");
 const ExamAttendance = require("../models/examAttendance.model");
 const User = require("../models/user.model");
+const mongoose = require("mongoose");
 
 // Manage Virtual Machines for Practical Exams
 const manageMachines = async (req, res) => {
@@ -499,6 +500,160 @@ const getActiveExams = async (req, res) => {
   }
 };
 
+// Get all passed exams across all users (admin only)
+const getAllPassedExams = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, fromDate, toDate, userId } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    // Build query for passed exams (score >= 60%)
+    let pipeline = [
+      // Stage 1: Join with exams collection
+      {
+        $lookup: {
+          from: 'exams',
+          localField: 'examId',
+          foreignField: '_id',
+          as: 'examData'
+        }
+      },
+      // Stage 2: Join with users collection
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'userData'
+        }
+      },
+      // Stage 3: Reshape the document
+      {
+        $project: {
+          examId: 1,
+          userId: 1,
+          score: 1,
+          totalQuestions: 1,
+          attemptNumber: 1,
+          startTime: 1,
+          endTime: 1,
+          status: 1,
+          percentage: {
+            $multiply: [
+              { $divide: ['$score', { $cond: [{ $eq: ['$totalQuestions', 0] }, 1, '$totalQuestions'] }] },
+              100
+            ]
+          },
+          exam: { $arrayElemAt: ['$examData', 0] },
+          user: { $arrayElemAt: ['$userData', 0] }
+        }
+      },
+      // Stage 4: Filter for completed/timed out and passing percentage
+      {
+        $match: {
+          status: { $in: ['COMPLETED', 'TIMED_OUT'] },
+          percentage: { $gte: 60 }
+        }
+      }
+    ];
+    
+    // Add search filter if provided
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'exam.title': { $regex: search, $options: 'i' } },
+            { 'user.username': { $regex: search, $options: 'i' } },
+            { 'user.email': { $regex: search, $options: 'i' } },
+            { 'user.firstName': { $regex: search, $options: 'i' } },
+            { 'user.lastName': { $regex: search, $options: 'i' } }
+          ]
+        }
+      });
+    }
+    
+    // Add date range filter if provided
+    if (fromDate && toDate) {
+      pipeline.push({
+        $match: {
+          endTime: {
+            $gte: new Date(fromDate),
+            $lte: new Date(toDate)
+          }
+        }
+      });
+    }
+    
+    // Add specific user filter if provided
+    if (userId) {
+      pipeline.push({
+        $match: {
+          userId: new mongoose.Types.ObjectId(userId)
+        }
+      });
+    }
+    
+    // Add sorting stage (most recent first)
+    pipeline.push({ $sort: { endTime: -1 } });
+    
+    // Count total documents for pagination
+    const countPipeline = [...pipeline];
+    countPipeline.push({ $count: 'total' });
+    const countResult = await ExamAttendance.aggregate(countPipeline);
+    const total = countResult.length > 0 ? countResult[0].total : 0;
+    
+    // Add pagination
+    pipeline.push(
+      { $skip: (pageNum - 1) * limitNum },
+      { $limit: limitNum }
+    );
+    
+    // Execute the aggregation
+    const passedExams = await ExamAttendance.aggregate(pipeline);
+    
+    // Format the results for easier consumption
+    const formattedResults = passedExams.map(exam => ({
+      attendanceId: exam._id,
+      examId: exam.examId,
+      examTitle: exam.exam?.title || 'Unknown Exam',
+      examDescription: exam.exam?.description || '',
+      user: {
+        userId: exam.userId,
+        username: exam.user?.username || 'Unknown User',
+        name: exam.user?.firstName && exam.user?.lastName ? 
+              `${exam.user.firstName} ${exam.user.lastName}` : exam.user?.username || 'Unknown',
+        email: exam.user?.email || ''
+      },
+      score: exam.score,
+      totalQuestions: exam.totalQuestions,
+      percentage: exam.percentage.toFixed(2),
+      attemptNumber: exam.attemptNumber || 1,
+      timeTaken: exam.endTime ? 
+                 Math.round((new Date(exam.endTime) - new Date(exam.startTime)) / 60000) + ' min' :
+                 'N/A',
+      passedOn: new Date(exam.endTime).toLocaleDateString() + ' ' + 
+                new Date(exam.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+    }));
+    
+    res.status(200).json({
+      message: "Passed exams retrieved successfully",
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      passedExams: formattedResults
+    });
+    
+  } catch (error) {
+    console.error("Error retrieving passed exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 module.exports = { 
   manageMachines, 
   getUserResults, 
@@ -506,5 +661,6 @@ module.exports = {
   getAllExamHistory,
   getUserExamHistory,
   getExamPassFailStats,
-  getActiveExams
+  getActiveExams,
+  getAllPassedExams
 };

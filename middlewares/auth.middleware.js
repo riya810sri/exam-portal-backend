@@ -43,4 +43,21 @@ const verifyAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { verifyAdmin, authenticateUser };
+// Middleware to authorize admin users only
+const authorizeAdmin = (req, res, next) => {
+  // Check both role === 'admin' and isAdmin flag
+  if (req.user && (req.user.role === 'admin' || req.user.isAdmin === true)) {
+    next();
+  } else {
+    console.log("Admin access denied. User data:", req.user);
+    res.status(403).json({
+      message: "Access denied. Admin privileges required."
+    });
+  }
+};
+
+module.exports = { 
+  verifyAdmin, 
+  authenticateUser, 
+  authorizeAdmin 
+};
