@@ -42,7 +42,9 @@ app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
 
 // Connect to Database
-
+app.use("/live", (req, res) => {
+  res.status(200).json({ message: "Server is live" });
+});
 
 // Start server
 app.listen(PORT, () => {
