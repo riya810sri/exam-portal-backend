@@ -9,6 +9,10 @@ router.post("/login", authController.loginUser ||
   
 router.post("/register", authController.registerUser);
 
+// OTP verification routes
+router.post("/verify-otp", authController.verifyOTP);
+router.post("/resend-otp", authController.resendOTP);
+
 router.post("/forgot-password", authController.forgotPassword || 
   ((req, res) => res.status(501).json({ message: "Forgot password not implemented yet" })));
   
