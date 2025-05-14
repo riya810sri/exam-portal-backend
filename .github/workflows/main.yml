@@ -18,11 +18,11 @@ on:
       container_port:
         description: "Container port to expose"
         required: true
-        default: "6001"
+        default: "6000"
       host_port:
         description: "Host port to map to container"
         required: true
-        default: "6001"
+        default: "6000"
 
 jobs:
   deploy:
@@ -42,7 +42,7 @@ jobs:
       - name: Set up SSH Agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Ensure `tar` Installed
         run: |
@@ -54,13 +54,13 @@ jobs:
 
       - name: Transfer Archive to Server
         run: |
-          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }}:${{ secrets.DEPLOY_DIR }}
+          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.USER }}@${{ secrets.SERVER_IP }}:${{ secrets.DIR }}
 
       - name: Trigger Remote Deployment via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} "
+          ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} "
             set -e
-            cd ${{ secrets.DEPLOY_DIR }}
+            cd ${{ secrets.DIR }}
             echo '📦 Extracting project...'
             tar -xzf project.tar.gz
             rm project.tar.gz
