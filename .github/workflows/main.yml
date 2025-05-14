@@ -1,71 +1,88 @@
-name: Backend Deploy
+name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "Docker image name"
+        required: true
+        default: "harisons_backend"
+      container_name:
+        description: "Docker container name"
+        required: true
+        default: "harisons_backend"
+      container_port:
+        description: "Container port to expose"
+        required: true
+        default: "6000"
+      host_port:
+        description: "Host port to map to container"
+        required: true
+        default: "6000"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ github.event.inputs.image_name || secrets.IMAGE_NAME }}
+      CONTAINER_NAME: ${{ github.event.inputs.container_name || 'harisons_backend' }}
+      CONTAINER_PORT: ${{ github.event.inputs.container_port || secrets.CONTAINER_PORT }}
+      HOST_PORT: ${{ github.event.inputs.host_port || secrets.HOST_PORT }}
+      APP_NAME: ${{ secrets.APP_NAME }}
+      START_FILE: ${{ secrets.START_FILE_PATH }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy backend via SSH + SCP
-        env:
-          DEV_SFTP_PRIVATE_KEY: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
-          DEV_HOST: ${{ secrets.DEV_HOST }}
-          DEV_USER: ${{ secrets.DEV_USER }}
-          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
-          ENV: ${{ secrets.ENV }}
-          ENV_FILE: ${{ secrets.ENV_FILE }}
-          APP_NAME: ${{ secrets.APP_NAME }}
-          START_FILE_PATH: ${{ secrets.START_FILE_PATH }}
-          NPM_BASE_COMMAND: ${{ secrets.NPM_BASE_COMMAND }}
-          PM2_BASE_COMMAND: ${{ secrets.PM2_BASE_COMMAND }}
-        shell: bash
-        run: |
-          # 1. Write private key
-          echo "$DEV_SFTP_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          # 2. Save ENV content as temp file (multiline support)
-          echo "$ENV" > local_env_file.env
-          # 3. Clean remote dir
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${DEV_USER}@${DEV_HOST} "rm -rf ${DEPLOY_DIR}/* && mkdir -p ${DEPLOY_DIR} && mkdir -p \$(dirname ${DEPLOY_DIR}/${ENV_FILE})"
-          # 4. Copy files and env
-          scp -i private_key.pem -o StrictHostKeyChecking=no -r ./* ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/
-          scp -i private_key.pem -o StrictHostKeyChecking=no local_env_file.env ${DEV_USER}@${DEV_HOST}:${DEPLOY_DIR}/${ENV_FILE}
+      - name: Set up SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
 
-          # 
-          cat > deploy_script.sh << EOF
-          cd $DEPLOY_DIR
-          $NPM_BASE_COMMAND install
-          $NPM_BASE_COMMAND audit fix --force
-          
-          # Run npm update to resolve dependency vulnerabilities
-          $NPM_BASE_COMMAND update semver simple-update-notifier nodemon --depth 5
-          
-          export NODE_ENV=production
-          if ! command -v $PM2_BASE_COMMAND &> /dev/null; then
-            echo "PM2 not found, installing globally..."
-            $NPM_BASE_COMMAND install -g pm2
-          fi
-          
-          if pm2 status | grep -q "$APP_NAME"; then
-            echo "Restarting existing PM2 process..."
-            pm2 restart "$APP_NAME"
-          else
-            echo "Starting new PM2 process..."
-            pm2 start $START_FILE_PATH --name "$APP_NAME"
-          fi
-          pm2 save
-          EOF
-          
-          # Make script executable and execute it remotely
-          chmod +x deploy_script.sh
-          ssh -i private_key.pem -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST 'bash -s' < deploy_script.sh
-          
-          # 5. Cleanup
-          rm private_key.pem local_env_file.env
+      - name: Ensure `tar` Installed
+        run: |
+          sudo apt-get update && sudo apt-get install -y tar
+
+      - name: Archive Project (Excluding Unwanted Files)
+        run: |
+          tar --exclude='.git' --exclude='.github' --exclude='node_modules' --ignore-failed-read --warning=no-file-changed -czf project.tar.gz .
+
+      - name: Transfer Archive to Server
+        run: |
+          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }}:${{ secrets.DEPLOY_DIR }}
+
+      - name: Trigger Remote Deployment via SSH
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} "
+            set -e
+            cd ${{ secrets.DEPLOY_DIR }}
+            echo '📦 Extracting project...'
+            tar -xzf project.tar.gz
+            rm project.tar.gz
+
+            echo '🔐 Creating env file if missing...'
+            [ -f \"${{ secrets.ENV_FILE }}\" ] || echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\"
+
+            echo '📦 Installing dependencies...'
+            npm install
+
+            echo '🔧 Fixing vulnerabilities...'
+            npm audit fix --force || true
+
+            echo '🚀 Deploying via PM2...'
+            APP_NAME=\"${{ secrets.APP_NAME }}\"
+            START_FILE=\"${{ secrets.START_FILE_PATH }}\"
+
+            if ! pm2 show \"\$APP_NAME\" > /dev/null 2>&1; then
+              echo 'Starting new instance...'
+              pm2 start \"\$START_FILE\" --name \"\$APP_NAME\"
+            else
+              echo 'Restarting existing app...'
+              pm2 restart \"\$APP_NAME\"
+            fi
+          "
