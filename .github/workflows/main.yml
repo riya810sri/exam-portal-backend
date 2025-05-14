@@ -60,13 +60,15 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} "
             set -e
-            cd ${{ secrets.DIR }}
+            cd \"${{ secrets.DIR }}\"
             echo '📦 Extracting project...'
             tar -xzf project.tar.gz
             rm project.tar.gz
 
             echo '🔐 Creating env file if missing...'
-            [ -f \"${{ secrets.ENV_FILE }}\" ] || echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\"
+            if [ ! -f \"${{ secrets.ENV_FILE }}\" ]; then
+              echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\"
+            fi
 
             echo '📦 Installing dependencies...'
             npm install
