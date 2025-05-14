@@ -54,13 +54,13 @@ jobs:
 
       - name: Transfer Archive to Server
         run: |
-          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.USER }}@${{ secrets.SERVER_IP }}:${{ secrets.DIR }}
+          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }}:${{ secrets.DEPLOY_DIR }}
 
       - name: Trigger Remote Deployment via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} "
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} "
             set -e
-            cd ${{ secrets.DIR }}
+            cd ${{ secrets.DEPLOY_DIR }}
             echo '📦 Extracting project...'
             tar -xzf project.tar.gz
             rm project.tar.gz
