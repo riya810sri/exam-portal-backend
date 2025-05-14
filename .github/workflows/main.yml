@@ -58,33 +58,31 @@ jobs:
 
       - name: Trigger Remote Deployment via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} "
+          ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
-            cd \"${{ secrets.DIR }}\"
-            echo '📦 Extracting project...'
+            cd ${{ secrets.DIR }}
+            echo "📦 Extracting project..."
             tar -xzf project.tar.gz
             rm project.tar.gz
 
-            echo '🔐 Creating env file if missing...'
-            if [ ! -f \"${{ secrets.ENV_FILE }}\" ]; then
-              echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\"
-            fi
+            echo "🔐 Creating env file if missing..."
+            [ -f "${{ secrets.ENV_FILE }}" ] || echo '${{ secrets.ENV }}' > "${{ secrets.ENV_FILE }}"
 
-            echo '📦 Installing dependencies...'
+            echo "📦 Installing dependencies..."
             npm install
 
-            echo '🔧 Fixing vulnerabilities...'
+            echo "🔧 Fixing vulnerabilities..."
             npm audit fix --force || true
 
-            echo '🚀 Deploying via PM2...'
-            APP_NAME=\"${{ secrets.APP_NAME }}\"
-            START_FILE=\"${{ secrets.START_FILE_PATH }}\"
+            echo "🚀 Deploying via PM2..."
+            APP_NAME="${{ env.APP_NAME }}"
+            START_FILE="${{ env.START_FILE }}"
 
-            if ! pm2 show \"\$APP_NAME\" > /dev/null 2>&1; then
-              echo 'Starting new instance...'
-              pm2 start \"\$START_FILE\" --name \"\$APP_NAME\"
+            if ! pm2 show "$APP_NAME" > /dev/null 2>&1; then
+              echo "Starting new instance..."
+              pm2 start "$START_FILE" --name "$APP_NAME"
             else
-              echo 'Restarting existing app...'
-              pm2 restart \"\$APP_NAME\"
+              echo "Restarting existing app..."
+              pm2 restart "$APP_NAME"
             fi
-          "
+          EOF
