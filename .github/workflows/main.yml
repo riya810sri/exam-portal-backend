@@ -10,26 +10,26 @@ on:
       image_name:
         description: "Docker image name"
         required: true
-        default: "harisons_backend"
+        default: "tech_exam"
       container_name:
         description: "Docker container name"
         required: true
-        default: "harisons_backend"
+        default: "tech_exam"
       container_port:
         description: "Container port to expose"
         required: true
-        default: "6000"
+        default: "6001"
       host_port:
         description: "Host port to map to container"
         required: true
-        default: "6000"
+        default: "6001"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       IMAGE_NAME: ${{ github.event.inputs.image_name || secrets.IMAGE_NAME }}
-      CONTAINER_NAME: ${{ github.event.inputs.container_name || 'harisons_backend' }}
+      CONTAINER_NAME: ${{ github.event.inputs.container_name || 'tech_exam' }}
       CONTAINER_PORT: ${{ github.event.inputs.container_port || secrets.CONTAINER_PORT }}
       HOST_PORT: ${{ github.event.inputs.host_port || secrets.HOST_PORT }}
       APP_NAME: ${{ secrets.APP_NAME }}
@@ -42,7 +42,7 @@ jobs:
       - name: Set up SSH Agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DEV_SFTP_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Ensure `tar` Installed
         run: |
@@ -54,33 +54,35 @@ jobs:
 
       - name: Transfer Archive to Server
         run: |
-          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }}:${{ secrets.DEPLOY_DIR }}
+          scp -o StrictHostKeyChecking=no project.tar.gz ${{ secrets.USER }}@${{ secrets.SERVER_IP }}:${{ secrets.DIR }}
 
       - name: Trigger Remote Deployment via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} "set -e && \
-            cd ${{ secrets.DEPLOY_DIR }} && \
-            echo '📦 Extracting project...' && \
-            tar -xzf project.tar.gz && \
-            rm project.tar.gz && \
-            
-            echo '🔐 Creating env file if missing...' && \
-            [ -f \"${{ secrets.ENV_FILE }}\" ] || echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\" && \
-            
-            echo '📦 Installing dependencies...' && \
-            npm install && \
-            
-            echo '🔧 Fixing vulnerabilities...' && \
-            npm audit fix --force || true && \
-            
-            echo '🚀 Deploying via PM2...' && \
-            APP_NAME=\"${{ secrets.APP_NAME }}\" && \
-            START_FILE=\"${{ secrets.START_FILE_PATH }}\" && \
-            
-            if ! pm2 show \"\$APP_NAME\" > /dev/null 2>&1; then \
-              echo 'Starting new instance...' && \
-              pm2 start \"\$START_FILE\" --name \"\$APP_NAME\"; \
-            else \
-              echo 'Restarting existing app...' && \
-              pm2 restart \"\$APP_NAME\"; \
-            fi"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.SERVER_IP }} "
+            set -e
+            cd ${{ secrets.DIR }}
+            echo '📦 Extracting project...'
+            tar -xzf project.tar.gz
+            rm project.tar.gz
+
+            echo '🔐 Creating env file if missing...'
+            [ -f \"${{ secrets.ENV_FILE }}\" ] || echo \"${{ secrets.ENV }}\" > \"${{ secrets.ENV_FILE }}\"
+
+            echo '📦 Installing dependencies...'
+            npm install
+
+            echo '🔧 Fixing vulnerabilities...'
+            npm audit fix --force || true
+
+            echo '🚀 Deploying via PM2...'
+            APP_NAME=\"${{ secrets.APP_NAME }}\"
+            START_FILE=\"${{ secrets.START_FILE_PATH }}\"
+
+            if ! pm2 show \"\$APP_NAME\" > /dev/null 2>&1; then
+              echo 'Starting new instance...'
+              pm2 start \"\$START_FILE\" --name \"\$APP_NAME\"
+            else
+              echo 'Restarting existing app...'
+              pm2 restart \"\$APP_NAME\"
+            fi
+          "
