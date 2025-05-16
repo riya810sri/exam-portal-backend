@@ -21,6 +21,10 @@ router.get("/pending", authenticateUser, checkRole("admin"),
 router.get("/approved", authenticateUser, checkRole("admin"), 
   examController.getApprovedExams ? examController.getApprovedExams : fallback("getApprovedExams"));
 
+// Only admin users can view unpublished exams (previously published exams)
+router.get("/unpublished", authenticateUser, checkRole("admin"), 
+  examController.getUnpublishedExams ? examController.getUnpublishedExams : fallback("getUnpublishedExams"));
+
 // All authenticated users can view a single exam (but only published ones for non-admins)
 router.get("/:id", authenticateUser, 
   examController.getExamById ? examController.getExamById : fallback("getExamById"));
@@ -35,11 +39,14 @@ router.put("/:id", authenticateUser, checkRole("admin"),
 router.delete("/:id", authenticateUser, checkRole("admin"), 
   examController.deleteExam ? examController.deleteExam : fallback("deleteExam"));
 
-// Admin approval and publishing endpoints
+// Admin approval, publishing, and unpublishing endpoints
 router.patch("/:id/approve", authenticateUser, checkRole("admin"), 
   examController.approveExam ? examController.approveExam : fallback("approveExam"));
 
 router.patch("/:id/publish", authenticateUser, checkRole("admin"), 
   examController.publishExam ? examController.publishExam : fallback("publishExam"));
+
+router.patch("/:id/unpublish", authenticateUser, checkRole("admin"), 
+  examController.unpublishExam ? examController.unpublishExam : fallback("unpublishExam"));
 
 module.exports = router;

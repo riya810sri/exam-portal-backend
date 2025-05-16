@@ -3,24 +3,16 @@ const router = express.Router();
 const { authenticateUser } = require("../middlewares/auth.middleware");
 const { checkRoleAccess } = require("../middlewares/role.middleware");
 const { checkRole } = require("../middlewares/permissions.middleware");
-const { addQuestion, getQuestionsByExam, deleteQuestion } = require("../controllers/questions.controller");
-const questionsController = require("../controllers/questions.controller");
-
-// Check if controller methods exist and provide fallbacks if they don't
-const getAllQuestions = questionsController.getAllQuestions || 
-  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
-
-const getQuestionById = questionsController.getQuestionById || 
-  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
-
-const createQuestion = questionsController.createQuestion || 
-  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
-
-const updateQuestion = questionsController.updateQuestion || 
-  ((req, res) => res.status(501).json({ message: "Not implemented yet" }));
+const { 
+  addQuestion, 
+  getQuestionsByExam, 
+  deleteQuestion, 
+  getQuestionById, 
+  updateQuestion 
+} = require("../controllers/questions.controller");
 
 // All users can view questions
-router.get("/", authenticateUser, getAllQuestions);
+router.get("/", authenticateUser, getQuestionById ? getQuestionById : (req, res) => res.status(501).json({ message: "Not implemented yet" }));
 router.get("/:id", authenticateUser, getQuestionById);
 
 // Route to get questions by exam ID
@@ -29,9 +21,18 @@ router.get('/exam/:examId', getQuestionsByExam);
 // Route to add questions
 router.post('/', addQuestion);
 
-// Only admin can create, update, delete questions
-router.post("/", authenticateUser, checkRole("admin"), createQuestion);
-router.put("/:id", authenticateUser, checkRole("admin"), updateQuestion);
+// Only admin can create and delete questions
+router.post("/", authenticateUser, checkRole("admin"), (req, res) => {
+  if (typeof createQuestion === 'function') {
+    createQuestion(req, res);
+  } else {
+    res.status(501).json({ message: "Not implemented yet" });
+  }
+});
+
 router.delete("/:id", authenticateUser, checkRole("admin"), deleteQuestion);
+
+// Any authenticated user can update questions (but controller will enforce permissions)
+router.put("/:id", authenticateUser, updateQuestion);
 
 module.exports = router;

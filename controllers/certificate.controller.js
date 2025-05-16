@@ -12,20 +12,28 @@ class CertificateGenerator {
             layout: 'landscape'
         });
         
-        // Use fontkit to inspect the font
+        // Try to use custom font, but gracefully fall back to standard font
         try {
             const fontPath = path.join(__dirname, 'luminus.ttf');
-            const fontData = fs.readFileSync(fontPath);
-            const font = fontkit.create(fontData);
-            
-            // Get the actual font name from fontkit
-            const fontName = font.familyName;
-            
-            // Now register with the correct name
-            this.doc.registerFont('CustomFont', fontPath);
-            this.fontRegistered = true;
+            // Check if the font exists before trying to read it
+            if (fs.existsSync(fontPath)) {
+                const fontData = fs.readFileSync(fontPath);
+                const font = fontkit.create(fontData);
+                
+                // Get the actual font name from fontkit
+                const fontName = font.familyName;
+                
+                // Now register with the correct name
+                this.doc.registerFont('CustomFont', fontPath);
+                this.fontRegistered = true;
+                console.log("Custom font registered successfully");
+            } else {
+                // Font file doesn't exist, no need to show an error
+                console.log("Custom font not found, using standard fonts");
+                this.fontRegistered = false;
+            }
         } catch (error) {
-            console.log("Font registration error:", error.message);
+            console.log("Font registration skipped:", error.message);
             this.fontRegistered = false;
         }
     }

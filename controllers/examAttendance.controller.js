@@ -1360,7 +1360,7 @@ const getUserExams = async (req, res) => {
 const myExamHistory = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { status, search, sort = 'recent' } = req.query;
+    const { status, search, sort = 'recent', includeUnpublished = 'true' } = req.query;
     
     // Get user details to personalize the response
     const user = await User.findById(userId).select('username firstName lastName email');
@@ -1376,7 +1376,48 @@ const myExamHistory = async (req, res) => {
       })
       .sort({ startTime: -1 });
     
+    // If the user is an admin and includeUnpublished is true, also fetch unpublished exams
+    let unpublishedExams = [];
+    if (req.user.role === 'admin' && includeUnpublished === 'true') {
+      // Unpublished exams are those that were previously published (publishedAt is not null)
+      // but have been reverted to APPROVED status
+      unpublishedExams = await Exam.find({ 
+        status: "APPROVED", 
+        publishedAt: { $ne: null } 
+      })
+      .select('title description duration status publishedAt createdBy updatedAt')
+      .populate("createdBy", "username firstName lastName")
+      .sort({ updatedAt: -1 });
+      
+      // Apply search filter if provided
+      if (search) {
+        unpublishedExams = unpublishedExams.filter(exam => 
+          exam.title.toLowerCase().includes(search.toLowerCase())
+        );
+      }
+    }
+    
     if (!examAttendances || examAttendances.length === 0) {
+      // Even if the user hasn't taken exams, we might still show unpublished exams to admin
+      if (unpublishedExams.length > 0) {
+        return res.status(200).json({ 
+          message: "You haven't taken any exams yet, but there are unpublished exams available",
+          user: {
+            username: user.username,
+            name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.username
+          },
+          summary: {
+            totalExams: 0,
+            totalAttempts: 0,
+            completedExams: 0,
+            passedExams: 0,
+            passRate: "0%"
+          },
+          exams: [],
+          unpublishedExams: formatUnpublishedExams(unpublishedExams)
+        });
+      }
+      
       return res.status(200).json({ 
         message: "You haven't taken any exams yet",
         user: {
@@ -1529,8 +1570,8 @@ const myExamHistory = async (req, res) => {
       ? ((passedExams / totalUniqueExams) * 100).toFixed(1) + '%'
       : '0%';
     
-    // Return formatted response
-    res.status(200).json({
+    // Prepare the response object
+    const response = {
       message: "Exam history retrieved successfully",
       user: {
         username: user.username,
@@ -1561,7 +1602,16 @@ const myExamHistory = async (req, res) => {
           search: search || ''
         }
       }
-    });
+    };
+    
+    // Add unpublished exams for admin users
+    if (unpublishedExams.length > 0) {
+      response.unpublishedExams = formatUnpublishedExams(unpublishedExams);
+      response.summary.unpublishedExamsCount = unpublishedExams.length;
+    }
+    
+    // Return formatted response
+    res.status(200).json(response);
     
   } catch (error) {
     console.error("Error retrieving exam history:", error);
@@ -1571,6 +1621,37 @@ const myExamHistory = async (req, res) => {
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
+};
+
+// Helper function to format unpublished exams for the response
+const formatUnpublishedExams = (unpublishedExams) => {
+  return unpublishedExams.map(exam => {
+    // Calculate time since unpublished
+    const lastUpdated = new Date(exam.updatedAt || exam.publishedAt);
+    const now = new Date();
+    const diffMs = now - lastUpdated;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const timeAgo = diffDays > 0 
+      ? `${diffDays} day${diffDays > 1 ? 's' : ''} ago` 
+      : `${Math.floor(diffMs / (1000 * 60 * 60))} hour${Math.floor(diffMs / (1000 * 60 * 60)) > 1 ? 's' : ''} ago`;
+    
+    return {
+      _id: exam._id,
+      title: exam.title,
+      description: exam.description,
+      duration: exam.duration,
+      status: exam.status,
+      publishedAt: exam.publishedAt,
+      wasPublished: true,
+      unpublishedAt: exam.updatedAt,
+      timeAgo: timeAgo,
+      createdBy: exam.createdBy ? {
+        _id: exam.createdBy._id,
+        username: exam.createdBy.username,
+        name: `${exam.createdBy.firstName || ''} ${exam.createdBy.lastName || ''}`.trim() || exam.createdBy.username
+      } : null
+    };
+  });
 };
 
 module.exports = {

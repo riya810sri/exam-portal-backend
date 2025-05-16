@@ -193,23 +193,35 @@ const getPendingExams = async (req, res) => {
 
 const getExamById = async (req, res) => {
   try {
+    console.log(`Getting exam with ID: ${req.params.id} for user role: ${req.user.role}`);
+    
     const exam = await Exam.findById(req.params.id)
       .populate("sections.mcqs sections.shortAnswers")
       .populate("createdBy", "username firstName lastName")
       .populate("approvedBy", "username firstName lastName");
 
-    if (!exam) return res.status(404).json({ message: "Exam not found" });
+    if (!exam) {
+      console.log(`Exam with ID ${req.params.id} not found`);
+      return res.status(404).json({ message: "Exam not found" });
+    }
+
+    console.log(`Exam found. Status: ${exam.status}, User role: ${req.user.role}`);
 
     // If user is not an admin and the exam is not published, deny access
     if (req.user.role !== "admin" && exam.status !== "PUBLISHED") {
+      console.log(`Access denied for non-admin user to ${exam.status} exam`);
       return res.status(403).json({ message: "Access denied. Exam is not published yet." });
     }
 
+    // For admin users or published exams, allow access
     res.status(200).json(exam);
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+    console.error("Error in getExamById:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined 
+    });
   }
 };
 
@@ -230,6 +242,7 @@ const deleteExam = async (req, res) => {
 
 const updateExam = async (req, res) => {
   try {
+    console.log(`Updating exam ${req.params.id} by user ${req.user._id} with role ${req.user.role}`);
     const { title, description, duration, sections } = req.body;
     const examId = req.params.id;
     
@@ -237,40 +250,77 @@ const updateExam = async (req, res) => {
     const exam = await Exam.findById(examId);
     
     if (!exam) {
+      console.log(`Exam ${examId} not found`);
       return res.status(404).json({ message: "Exam not found" });
     }
     
-    // Only allow updates if the exam is pending or if user is admin
-    if (exam.status !== "PENDING" && req.user.role !== "admin") {
+    console.log(`Found exam with status: ${exam.status}`);
+    
+    // Check for attempts if it's a published exam
+    if (exam.status === "PUBLISHED") {
+      const attemptCount = await ExamAttendance.countDocuments({ examId });
+      console.log(`Exam has ${attemptCount} attempt(s)`);
+      
+      // If there are attempts, we don't allow certain changes
+      if (attemptCount > 0) {
+        console.log(`Cannot modify exam with ${attemptCount} attempts`);
+        return res.status(403).json({
+          message: "Cannot update exam with existing attempts. Please create a new version instead.",
+          attempts: attemptCount
+        });
+      }
+    }
+    
+    // Admin case - admins can update any exam with proper status handling
+    if (req.user.role === "admin") {
+      console.log("Admin user - full update rights granted");
+      let updateData = { title, description, duration, sections };
+      
+      // Find and update the exam
+      const updatedExam = await Exam.findByIdAndUpdate(
+        examId,
+        updateData,
+        { new: true }
+      ).populate("sections.mcqs sections.shortAnswers");
+      
+      console.log(`Admin successfully updated exam ${examId}`);
+      return res.json({ 
+        message: "Exam updated successfully by admin", 
+        exam: updatedExam,
+        status: updatedExam.status 
+      });
+    }
+    
+    // Non-admin case - restrict updates based on status
+    if (exam.status !== "PENDING") {
+      console.log(`Non-admin cannot update exam with status ${exam.status}`);
       return res.status(403).json({
         message: "Cannot update exam. Only pending exams can be updated by non-admin users."
       });
     }
     
-    // If exam was approved and non-admin makes changes, revert to pending
+    // Non-admin users updating a pending exam
     let updateData = { title, description, duration, sections };
-    if (exam.status !== "PENDING" && req.user.role !== "admin") {
-      updateData.status = "PENDING";
-      updateData.approvedBy = null;
-      updateData.approvedAt = null;
-    }
-
-    // Find and update the exam
+    
     const updatedExam = await Exam.findByIdAndUpdate(
       examId,
       updateData,
       { new: true }
-    ).populate("sections.mcqs sections.shortAnswers"); // Populate questions
-
+    ).populate("sections.mcqs sections.shortAnswers");
+    
+    console.log(`Non-admin successfully updated pending exam ${examId}`);
     res.json({ 
       message: "Exam updated successfully", 
       exam: updatedExam,
       status: updatedExam.status 
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+    console.error("Error updating exam:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
@@ -350,6 +400,59 @@ const publishExam = async (req, res) => {
   }
 };
 
+const unpublishExam = async (req, res) => {
+  try {
+    const examId = req.params.id;
+    
+    // Find the exam
+    const exam = await Exam.findById(examId);
+    
+    if (!exam) {
+      return res.status(404).json({ message: "Exam not found" });
+    }
+    
+    // Can only unpublish exams that are currently published
+    if (exam.status !== "PUBLISHED") {
+      return res.status(400).json({ 
+        message: "Cannot unpublish exam. Only published exams can be unpublished." 
+      });
+    }
+    
+    // Check for existing attempts
+    const attemptCount = await ExamAttendance.countDocuments({ examId });
+    
+    if (attemptCount > 0) {
+      return res.status(400).json({ 
+        message: "Cannot unpublish exam that has already been attempted by users.",
+        attempts: attemptCount
+      });
+    }
+    
+    // Update exam status back to APPROVED
+    exam.status = "APPROVED";
+    exam.publishedAt = null; // Clear the published date
+    
+    await exam.save();
+    
+    res.status(200).json({
+      message: "Exam unpublished successfully",
+      exam: {
+        _id: exam._id,
+        title: exam.title,
+        status: exam.status
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error unpublishing exam:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 const getApprovedExams = async (req, res) => {
   try {
     const approvedExams = await Exam.find({ status: "APPROVED" })
@@ -362,6 +465,95 @@ const getApprovedExams = async (req, res) => {
     res
       .status(500)
       .json({ error: "Internal Server Error", details: error.message });
+  }
+};
+
+const getUnpublishedExams = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, sortBy = 'updatedAt', sortOrder = 'desc' } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    // Build query to find approved exams that have a non-null publishedAt field
+    // This indicates they were published before and then unpublished
+    let query = { 
+      status: "APPROVED",
+      publishedAt: { $ne: null }  // Has been published before
+    };
+    
+    // Add search filter if provided
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Get total count for pagination
+    const totalCount = await Exam.countDocuments(query);
+    
+    // Determine sort order
+    const sortOptions = {};
+    sortOptions[sortBy || 'updatedAt'] = sortOrder === 'asc' ? 1 : -1;
+    
+    // Find unpublished exams with pagination and sorting
+    const unpublishedExams = await Exam.find(query)
+      .populate("createdBy", "username firstName lastName")
+      .populate("approvedBy", "username firstName lastName")
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .sort(sortOptions);
+    
+    // Format response data with additional metadata
+    const formattedExams = await Promise.all(unpublishedExams.map(async (exam) => {
+      // Get question count
+      const questionCount = exam.sections.mcqs.length;
+      
+      // Check if there are any attempts
+      const attemptCount = await ExamAttendance.countDocuments({ examId: exam._id });
+      
+      return {
+        _id: exam._id,
+        title: exam.title,
+        description: exam.description,
+        duration: exam.duration,
+        status: exam.status,
+        questionCount,
+        createdBy: exam.createdBy ? {
+          _id: exam.createdBy._id,
+          username: exam.createdBy.username,
+          name: `${exam.createdBy.firstName || ''} ${exam.createdBy.lastName || ''}`.trim() || exam.createdBy.username
+        } : null,
+        approvedBy: exam.approvedBy ? {
+          _id: exam.approvedBy._id,
+          username: exam.approvedBy.username,
+          name: `${exam.approvedBy.firstName || ''} ${exam.approvedBy.lastName || ''}`.trim() || exam.approvedBy.username
+        } : null,
+        createdAt: exam.createdAt,
+        approvedAt: exam.approvedAt,
+        publishedAt: exam.publishedAt,  // This will be non-null for unpublished exams
+        wasPublished: true,  // Flag indicating this exam was published before
+        hasAttempts: attemptCount > 0,
+        attemptCount
+      };
+    }));
+    
+    res.status(200).json({
+      message: "Unpublished exams retrieved successfully",
+      page: pageNum,
+      limit: limitNum,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      exams: formattedExams
+    });
+    
+  } catch (error) {
+    console.error("Error getting unpublished exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
@@ -459,6 +651,8 @@ module.exports = {
   updateExam,
   approveExam,
   publishExam,
+  unpublishExam,
   getApprovedExams,
+  getUnpublishedExams,
   attendExam,
 };

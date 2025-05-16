@@ -95,9 +95,82 @@ const getQuestionById = async (req, res) => {
   }
 };
 
+const updateQuestion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { questionText, options, correctAnswer, type } = req.body;
+    
+    // Find the question
+    const question = await Question.findById(id);
+    
+    if (!question) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+    
+    // Find the associated exam to check if updates are allowed
+    const exam = await Exam.findById(question.examId);
+    
+    if (!exam) {
+      return res.status(404).json({ message: "Associated exam not found" });
+    }
+    
+    // For admin users, allow updates regardless of exam status
+    const isAdmin = req.user.role === "admin";
+    
+    // If user is an admin, allow the update
+    // For non-admin users, revert exam to pending if it was previously approved/published
+    if (!isAdmin && exam.status !== "PENDING") {
+      console.log(`Reverting exam ${exam._id} status from ${exam.status} to PENDING due to question update by non-admin`);
+      exam.status = "PENDING";
+      exam.approvedBy = null;
+      exam.approvedAt = null;
+      await exam.save();
+    }
+    
+    // Update the question fields
+    question.questionText = questionText || question.questionText;
+    
+    // Update options only if the question is an MCQ and options are provided
+    if (type === "MCQ" || question.type === "MCQ") {
+      if (options && Array.isArray(options)) {
+        // Validate that MCQs have at least two options
+        if (options.length < 2) {
+          return res.status(400).json({ 
+            message: "MCQ questions must have at least two options" 
+          });
+        }
+        question.options = options;
+      }
+    }
+    
+    // Update correct answer if provided
+    if (correctAnswer) {
+      question.correctAnswer = correctAnswer;
+    }
+    
+    // Save the updated question
+    const updatedQuestion = await question.save();
+    
+    res.status(200).json({ 
+      message: "Question updated successfully",
+      question: updatedQuestion,
+      examStatus: exam.status // Include exam status in response for clarity
+    });
+    
+  } catch (error) {
+    console.error("Error updating question:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 module.exports = { 
   addQuestion, 
   getQuestionsByExam, 
   deleteQuestion,
-  getQuestionById
+  getQuestionById,
+  updateQuestion
 };
