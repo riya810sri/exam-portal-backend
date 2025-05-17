@@ -13,11 +13,11 @@ router.post("/register", authController.registerUser);
 router.post("/verify-otp", authController.verifyOTP);
 router.post("/resend-otp", authController.resendOTP);
 
-router.post("/forgot-password", authController.forgotPassword || 
-  ((req, res) => res.status(501).json({ message: "Forgot password not implemented yet" })));
-  
-router.post("/reset-password", authController.resetPassword || 
-  ((req, res) => res.status(501).json({ message: "Reset password not implemented yet" })));
+// Password reset flow routes
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/verify-reset-otp", authController.verifyResetOTP);
+router.post("/resend-reset-otp", authController.resendResetOTP);
+router.post("/reset-password", authController.resetPassword);
 
 // Protected routes with fallbacks
 router.get("/me", authenticateUser, authController.getCurrentUser || 

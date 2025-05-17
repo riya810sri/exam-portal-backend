@@ -253,16 +253,304 @@ const loginUser = async (req, res) => {
   }
 };
 
-const login = (req, res) => {
-  // Implementation
+// Request password reset - generates token and sends email
+const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  
+  // Validate input
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+  
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+    
+    // Don't reveal if user exists or not for security
+    if (!user) {
+      return res.status(200).json({ 
+        message: "If a user with that email exists, a password reset link has been sent." 
+      });
+    }
+    
+    // Generate reset token using OTP utility for consistency
+    const resetToken = generateOTP();
+    
+    // Set token expiry to 1 hour (instead of default 10 minutes)
+    const resetTokenExpiry = new Date();
+    resetTokenExpiry.setHours(resetTokenExpiry.getHours() + 1);
+    
+    // Store token in user record
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpiry = resetTokenExpiry;
+    
+    await user.save();
+    
+    // Send password reset email
+    try {
+      // Create email with reset instructions
+      const emailSubject = "Password Reset Request";
+      const emailBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
+          <h2 style="color: #4a86e8; text-align: center;">TechOnquer Password Reset</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>You have requested to reset your password. Please use the following code to reset your password:</p>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${resetToken}
+          </div>
+          
+          <p>This code is valid for 1 hour and can only be used once.</p>
+          
+          <p>If you did not request this reset, please ignore this email and your password will remain unchanged.</p>
+          
+          <p>Best regards,<br>TechOnquer Team</p>
+          
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777; text-align: center;">
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+      
+      // Use the same email sender as for OTP
+      await sendOTPEmail(email, resetToken, user.firstName);
+      console.log(`Password reset token sent to ${email}`);
+    } catch (emailError) {
+      console.error("Failed to send password reset email:", emailError);
+      return res.status(500).json({ message: "Failed to send password reset email" });
+    }
+    
+    res.status(200).json({ 
+      message: "If a user with that email exists, a password reset link has been sent." 
+    });
+    
+  } catch (error) {
+    console.error("Password reset request failed:", error);
+    res.status(500).json({ 
+      message: "Password reset request failed", 
+      error: error.message 
+    });
+  }
 };
 
-const forgotPassword = (req, res) => {
-  // Implementation
+// Reset password using token
+const resetPassword = async (req, res) => {
+  const { email, token, newPassword } = req.body;
+  
+  // Validate input
+  if (!email || !token || !newPassword) {
+    return res.status(400).json({ 
+      message: "Email, token, and new password are required" 
+    });
+  }
+  
+  // Validate password strength
+  if (newPassword.length < 8) {
+    return res.status(400).json({ 
+      message: "Password must be at least 8 characters long" 
+    });
+  }
+  
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Check if reset token exists and hasn't expired
+    if (!user.resetPasswordToken || !user.resetPasswordExpiry) {
+      return res.status(400).json({ 
+        message: "Password reset token is missing or has been used already" 
+      });
+    }
+    
+    // Check if OTP has been verified
+    if (!user.resetOTPVerified) {
+      return res.status(403).json({ 
+        message: "Please verify your OTP before resetting the password",
+        verified: false
+      });
+    }
+    
+    // Check if token has expired
+    if (new Date() > new Date(user.resetPasswordExpiry)) {
+      return res.status(400).json({ 
+        message: "Password reset token has expired. Please request a new token." 
+      });
+    }
+    
+    // Verify the token once more
+    if (user.resetPasswordToken !== token) {
+      return res.status(400).json({ message: "Invalid password reset token" });
+    }
+    
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Update user's password and clear reset token fields
+    user.password = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpiry = undefined;
+    user.resetOTPVerified = false;
+    
+    await user.save();
+    
+    // Invalidate any existing sessions for security
+    await Session.deleteMany({ userId: user._id });
+    
+    res.status(200).json({ 
+      message: "Password has been reset successfully. You can now log in with your new password." 
+    });
+    
+  } catch (error) {
+    console.error("Password reset failed:", error);
+    res.status(500).json({ 
+      message: "Password reset failed", 
+      error: error.message 
+    });
+  }
 };
 
-const resetPassword = (req, res) => {
-  // Implementation
+// Verify OTP sent during password reset flow
+const verifyResetOTP = async (req, res) => {
+  const { email, otp } = req.body;
+  
+  if (!email || !otp) {
+    return res.status(400).json({ message: "Email and OTP are required" });
+  }
+  
+  // Validate OTP format
+  if (!validateOTPFormat(otp)) {
+    return res.status(400).json({ message: "Invalid OTP format. OTP must be a 6-digit number." });
+  }
+  
+  try {
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Check if reset token exists
+    if (!user.resetPasswordToken) {
+      return res.status(400).json({ 
+        message: "No password reset was requested or it has already been used" 
+      });
+    }
+    
+    // Check if token has expired
+    if (new Date() > new Date(user.resetPasswordExpiry)) {
+      return res.status(400).json({ 
+        message: "Password reset OTP has expired. Please request a new one.", 
+        expired: true 
+      });
+    }
+    
+    // Verify the token
+    if (user.resetPasswordToken !== otp) {
+      return res.status(400).json({ message: "Invalid password reset OTP" });
+    }
+    
+    // Mark the OTP as verified but keep it for the actual password reset step
+    user.resetOTPVerified = true;
+    await user.save();
+    
+    res.status(200).json({ 
+      message: "OTP verified successfully. You can now reset your password.", 
+      verified: true,
+      email: user.email,
+      // Include a temporary verification token valid for the reset
+      resetVerificationToken: user.resetPasswordToken
+    });
+    
+  } catch (error) {
+    console.error("Reset OTP verification failed:", error);
+    res.status(500).json({ 
+      message: "Verification failed", 
+      error: error.message 
+    });
+  }
+};
+
+// Resend OTP for password reset
+const resendResetOTP = async (req, res) => {
+  const { email } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+  
+  try {
+    const user = await User.findOne({ email });
+    
+    // Don't reveal if user exists or not for security
+    if (!user) {
+      return res.status(200).json({ 
+        message: "If a user with that email exists, a new password reset OTP has been sent." 
+      });
+    }
+    
+    // Generate new reset token
+    const resetToken = generateOTP();
+    
+    // Set token expiry to 1 hour
+    const resetTokenExpiry = new Date();
+    resetTokenExpiry.setHours(resetTokenExpiry.getHours() + 1);
+    
+    // Store token in user record and reset verification flag
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpiry = resetTokenExpiry;
+    user.resetOTPVerified = false;
+    
+    await user.save();
+    
+    // Send password reset email
+    try {
+      // Create email with reset instructions
+      const emailSubject = "Password Reset OTP";
+      const emailBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
+          <h2 style="color: #4a86e8; text-align: center;">TechOnquer Password Reset</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>You have requested to reset your password. Please use the following code to verify your request:</p>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${resetToken}
+          </div>
+          
+          <p>This code is valid for 1 hour and can only be used once.</p>
+          
+          <p>If you did not request this reset, please ignore this email and your password will remain unchanged.</p>
+          
+          <p>Best regards,<br>TechOnquer Team</p>
+          
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777; text-align: center;">
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+      
+      // Use the same email sender as for OTP
+      await sendOTPEmail(email, resetToken, user.firstName);
+      console.log(`New password reset token sent to ${email}`);
+    } catch (emailError) {
+      console.error("Failed to send password reset email:", emailError);
+      return res.status(500).json({ message: "Failed to send password reset email" });
+    }
+    
+    res.status(200).json({ 
+      message: "If a user with that email exists, a new password reset OTP has been sent." 
+    });
+    
+  } catch (error) {
+    console.error("Resend reset OTP failed:", error);
+    res.status(500).json({ 
+      message: "Failed to resend password reset OTP", 
+      error: error.message 
+    });
+  }
 };
 
 const getCurrentUser = (req, res) => {
@@ -277,6 +565,9 @@ const changePassword = (req, res) => {
   // Implementation
 };
 
+// Alias loginUser function to login for backward compatibility
+const login = loginUser;
+
 module.exports = {
   login,
   forgotPassword,
@@ -287,5 +578,7 @@ module.exports = {
   loginUser,
   registerUser,
   verifyOTP,
-  resendOTP
+  resendOTP,
+  verifyResetOTP,
+  resendResetOTP
 };

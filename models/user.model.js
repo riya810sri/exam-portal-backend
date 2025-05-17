@@ -12,7 +12,10 @@ const UserSchema = new mongoose.Schema(
         isVerified: { type: Boolean, default: false },
         verificationOTP: { type: String },
         otpExpiry: { type: Date },
-        verificationAttempts: { type: Number, default: 0 }
+        verificationAttempts: { type: Number, default: 0 },
+        resetPasswordToken: { type: String },
+        resetPasswordExpiry: { type: Date },
+        resetOTPVerified: { type: Boolean, default: false }
     },
     { timestamps: true }
 );
