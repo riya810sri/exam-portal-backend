@@ -207,14 +207,24 @@ const getExamById = async (req, res) => {
 
     console.log(`Exam found. Status: ${exam.status}, User role: ${req.user.role}`);
 
-    // If user is not an admin and the exam is not published, deny access
-    if (req.user.role !== "admin" && exam.status !== "PUBLISHED") {
-      console.log(`Access denied for non-admin user to ${exam.status} exam`);
-      return res.status(403).json({ message: "Access denied. Exam is not published yet." });
+    // Check access permissions based on user role and relationship to the exam
+    const isAdmin = req.user.role === "admin";
+    const isCreator = exam.createdBy && exam.createdBy._id.toString() === req.user._id.toString();
+    const isPublished = exam.status === "PUBLISHED";
+    
+    // Grant access if:
+    // 1. User is an admin
+    // 2. User is the creator of the exam
+    // 3. Exam is published and accessible to all users
+    if (isAdmin || isCreator || isPublished) {
+      return res.status(200).json(exam);
     }
-
-    // For admin users or published exams, allow access
-    res.status(200).json(exam);
+    
+    // For all other cases, deny access
+    console.log(`Access denied for user ${req.user._id} to exam ${exam._id}`);
+    return res.status(403).json({ 
+      message: "Access denied. You don't have permission to view this exam." 
+    });
   } catch (error) {
     console.error("Error in getExamById:", error);
     res.status(500).json({ 
