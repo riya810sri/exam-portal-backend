@@ -29,13 +29,15 @@ router.get("/unpublished", authenticateUser, checkRole("admin"),
 router.get("/:id", authenticateUser, 
   examController.getExamById ? examController.getExamById : fallback("getExamById"));
 
-// Only admin users can create, update, delete exams
-router.post("/", authenticateUser, checkRole("admin"), 
+// Admin and teachers can create exams
+router.post("/", authenticateUser, checkRole(["admin", "teacher"]), 
   examController.createExam ? examController.createExam : fallback("createExam"));
   
-router.put("/:id", authenticateUser, checkRole("admin"), 
+// Admin and teachers can update exams (restrictions applied in the controller)
+router.put("/:id", authenticateUser, checkRole(["admin", "teacher"]), 
   examController.updateExam ? examController.updateExam : fallback("updateExam"));
   
+// Only admin users can delete exams
 router.delete("/:id", authenticateUser, checkRole("admin"), 
   examController.deleteExam ? examController.deleteExam : fallback("deleteExam"));
 

@@ -34,32 +34,32 @@ async function getUserRole(userId) {
   return { name: "student" };
 }
 
-// Simplified role checking for user and admin roles
-function checkRole(roleName) {
+// Simplified role checking - supporting both single role and array of roles
+function checkRole(roleNames) {
   return function(req, res, next) {
-    // For admin role check
-    if (roleName === "admin") {
-      if (!req.user || !req.user.isAdmin) {
-        return res.status(403).json({ 
-          message: "Forbidden: Admin role required" 
-        });
-      }
+    // Convert roleNames to array if it's a string
+    const roles = Array.isArray(roleNames) ? roleNames : [roleNames];
+    
+    // Check if user is authenticated
+    if (!req.user) {
+      return res.status(401).json({ 
+        message: "Unauthorized: Authentication required" 
+      });
+    }
+    
+    // Admin has access to everything
+    if (req.user.role === "admin" || req.user.isAdmin) {
       return next();
     }
     
-    // For normal user role check - all authenticated users have normal user access
-    if (roleName === "user") {
-      if (!req.user) {
-        return res.status(401).json({ 
-          message: "Unauthorized: Authentication required" 
-        });
-      }
+    // Check if user's role is in the allowed roles list
+    if (roles.includes(req.user.role)) {
       return next();
     }
     
-    // Any other role is not supported
+    // Deny access if role doesn't match
     return res.status(403).json({ 
-      message: `Forbidden: ${roleName} role not supported` 
+      message: `Forbidden: Requires one of these roles: ${roles.join(', ')}` 
     });
   };
 }
