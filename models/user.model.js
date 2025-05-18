@@ -15,7 +15,11 @@ const UserSchema = new mongoose.Schema(
         verificationAttempts: { type: Number, default: 0 },
         resetPasswordToken: { type: String },
         resetPasswordExpiry: { type: Date },
-        resetOTPVerified: { type: Boolean, default: false }
+        resetOTPVerified: { type: Boolean, default: false },
+        // Admin OTP verification fields
+        adminLoginOTP: { type: String },
+        adminOTPExpiry: { type: Date },
+        adminOTPVerified: { type: Boolean, default: false }
     },
     { timestamps: true }
 );

@@ -19,6 +19,10 @@ router.post("/verify-reset-otp", authController.verifyResetOTP);
 router.post("/resend-reset-otp", authController.resendResetOTP);
 router.post("/reset-password", authController.resetPassword);
 
+// Admin OTP verification routes
+router.post("/admin/generate-otp", authController.generateAdminOTP);
+router.post("/admin/verify-otp", authController.verifyAdminOTP);
+
 // Protected routes with fallbacks
 router.get("/me", authenticateUser, authController.getCurrentUser || 
   ((req, res) => res.status(501).json({ message: "Get current user not implemented yet" })));

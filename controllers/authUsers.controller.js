@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require("../models/user.model");
 const bcrypt = require("bcrypt");
 const Session = require("../models/session.model");
@@ -565,6 +566,204 @@ const changePassword = (req, res) => {
   // Implementation
 };
 
+// Generate OTP for admin login
+const generateAdminOTP = async (req, res) => {
+  const { email, password } = req.body;
+  
+  // Validate input
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
+  
+  try {
+    // Find user by email
+    const user = await User.findOne({ email }).select('+password');
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Verify this is an admin user
+    if (!user.isAdmin && user.role !== "admin") {
+      return res.status(403).json({ message: "Access denied. Admin privileges required." });
+    }
+    
+    // Check if email is verified
+    if (!user.isVerified) {
+      return res.status(403).json({ 
+        message: "Email not verified. Please verify your email first.",
+        requiresVerification: true,
+        email: user.email
+      });
+    }
+    
+    // Verify password
+    const authenticate = await bcrypt.compare(password, user.password);
+    if (!authenticate) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+    
+    // Generate OTP for admin login
+    const otp = generateOTP();
+    
+    // Set token expiry to 5 minutes (shorter for security)
+    const otpExpiry = new Date();
+    otpExpiry.setMinutes(otpExpiry.getMinutes() + 5);
+    
+    // Store token in user record
+    user.adminLoginOTP = otp;
+    user.adminOTPExpiry = otpExpiry;
+    user.adminOTPVerified = false;
+    
+    await user.save();
+    
+    // Send admin OTP email
+    try {
+      // Create email with admin verification instructions
+      const emailSubject = "Admin Login Verification";
+      const emailBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
+          <h2 style="color: #4a86e8; text-align: center;">TechOnquer Admin Verification</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>You are attempting to log in with administrator privileges. For security purposes, please use the following verification code:</p>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${otp}
+          </div>
+          
+          <p>This code is valid for 5 minutes and can only be used once.</p>
+          
+          <p>If you did not request this login, please contact system support immediately.</p>
+          
+          <p>Best regards,<br>TechOnquer Security Team</p>
+          
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777; text-align: center;">
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+      
+      // Use the same email sender as for OTP
+      await sendOTPEmail(email, otp, user.firstName);
+      console.log(`Admin OTP sent to ${email}`);
+    } catch (emailError) {
+      console.error("Failed to send admin OTP email:", emailError);
+      return res.status(500).json({ message: "Failed to send verification email" });
+    }
+    
+    // Create a pre-session identifier (will be completed after OTP verification)
+    const preSessionId = new mongoose.Types.ObjectId();
+    
+    res.status(200).json({ 
+      message: "Verification code sent to your email",
+      requiresOTP: true,
+      preSessionId: preSessionId.toString(),
+      email: user.email
+    });
+    
+  } catch (error) {
+    console.error("Admin OTP generation failed:", error);
+    res.status(500).json({ 
+      message: "Admin login verification failed", 
+      error: error.message 
+    });
+  }
+};
+
+// Verify OTP for admin login
+const verifyAdminOTP = async (req, res) => {
+  const { email, otp, preSessionId } = req.body;
+  
+  if (!email || !otp || !preSessionId) {
+    return res.status(400).json({ message: "Email, OTP, and session identifier are required" });
+  }
+  
+  // Validate OTP format
+  if (!validateOTPFormat(otp)) {
+    return res.status(400).json({ message: "Invalid OTP format. OTP must be a 6-digit number." });
+  }
+  
+  try {
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Verify this is an admin user
+    if (!user.isAdmin && user.role !== "admin") {
+      return res.status(403).json({ message: "Access denied. Admin privileges required." });
+    }
+    
+    // Check if OTP exists
+    if (!user.adminLoginOTP || !user.adminOTPExpiry) {
+      return res.status(400).json({ 
+        message: "No active verification code found. Please request a new one." 
+      });
+    }
+    
+    // Check if OTP has expired
+    if (new Date() > new Date(user.adminOTPExpiry)) {
+      // Clear expired OTP
+      user.adminLoginOTP = undefined;
+      user.adminOTPExpiry = undefined;
+      await user.save();
+      
+      return res.status(400).json({ 
+        message: "Verification code has expired. Please request a new one.", 
+        expired: true 
+      });
+    }
+    
+    // Verify the OTP
+    if (user.adminLoginOTP !== otp) {
+      return res.status(400).json({ message: "Invalid verification code" });
+    }
+    
+    // OTP verified, mark as verified
+    user.adminOTPVerified = true;
+    
+    // Clear the OTP
+    user.adminLoginOTP = undefined;
+    user.adminOTPExpiry = undefined;
+    
+    await user.save();
+    
+    // Clean up any existing sessions for this user (optional)
+    await Session.deleteMany({ userId: user._id });
+    
+    // Create new session
+    const session = new Session({ 
+      _id: new mongoose.Types.ObjectId(preSessionId),
+      userId: user._id,
+      isAdminSession: true 
+    });
+    await session.save();
+    
+    // Don't send password in response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.verificationOTP;
+    delete userResponse.otpExpiry;
+    delete userResponse.resetPasswordToken;
+    delete userResponse.resetPasswordExpiry;
+    
+    res.status(200).json({
+      message: "Admin login successful",
+      user: userResponse,
+      sessionId: session._id,
+      isAdminSession: true
+    });
+    
+  } catch (error) {
+    console.error("Admin OTP verification failed:", error);
+    res.status(500).json({ 
+      message: "Verification failed", 
+      error: error.message 
+    });
+  }
+};
+
 // Alias loginUser function to login for backward compatibility
 const login = loginUser;
 
@@ -580,5 +779,7 @@ module.exports = {
   verifyOTP,
   resendOTP,
   verifyResetOTP,
-  resendResetOTP
+  resendResetOTP,
+  generateAdminOTP,
+  verifyAdminOTP
 };
