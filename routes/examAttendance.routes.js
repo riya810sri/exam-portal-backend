@@ -9,9 +9,23 @@ const {
   getExamResult,
   reviewExamQuestions,
   getUserExams,
-  myExamHistory
+  myExamHistory,
+  cancelInProgressAttempt,
+  cancelAllAttempts,
+  adminGetAllUserHistory
 } = require("../controllers/examAttendance.controller");
 const { downloadCertificate } = require("../controllers/certificate.controller");
+
+// Custom middleware to check if user has admin role
+const isAdmin = (req, res, next) => {
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    return res.status(403).json({ 
+      message: "Access denied. Admin privileges required." 
+    });
+  }
+};
 
 // Helper function to get user-friendly status display
 function getStatusDisplay(status) {
@@ -33,6 +47,9 @@ router.get("/my-exams", authenticateUser, getUserExams);
 // Get user's enhanced exam history with better formatting and statistics
 router.get("/my-exam-history", authenticateUser, myExamHistory);
 
+// Route for canceling all in-progress attempts for the user (across all exams)
+router.post("/cancel-all-attempts", authenticateUser, cancelAllAttempts);
+
 // Get user's exam history filtered by status
 router.get("/my-exams/:status", authenticateUser, (req, res) => {
   req.query.statusFilter = req.params.status;
@@ -40,8 +57,20 @@ router.get("/my-exams/:status", authenticateUser, (req, res) => {
 });
 
 // Normal users can attend, submit answers, and complete exams
-router.get("/:examId/attend", authenticateUser, 
-  attendExam ? attendExam : fallback("attendExam"));
+router.get("/:examId/attend", authenticateUser, attendExam);
+
+// Explicit route for creating a new attempt
+router.get("/:examId/new-attempt", authenticateUser, (req, res) => {
+  // Ensure newAttempt is explicitly set to true
+  req.query.newAttempt = 'true';
+  attendExam(req, res);
+});
+
+// Route for canceling an in-progress exam attempt
+router.post("/:examId/cancel-in-progress", authenticateUser, cancelInProgressAttempt);
+
+// Route for canceling all attempts for an exam
+router.post("/:examId/cancel-all-attempts", authenticateUser, cancelAllAttempts);
   
 router.post("/:examId/submit-answer", authenticateUser, 
   submitAnswer ? submitAnswer : fallback("submitAnswer"));
@@ -62,5 +91,8 @@ router.get("/:examId/review", authenticateUser,
 // Normal users can download their certificates
 router.get("/:examId/certificate", authenticateUser, 
   downloadCertificate ? downloadCertificate : fallback("downloadCertificate"));
+
+// Admin routes
+router.get("/admin/history", authenticateUser, isAdmin, adminGetAllUserHistory);
 
 module.exports = router;

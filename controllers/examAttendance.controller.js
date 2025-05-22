@@ -99,7 +99,7 @@ const attendExam = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const MAX_ATTEMPTS = 2; // Maximum allowed attempts
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts
 
     console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
     
@@ -126,28 +126,6 @@ const attendExam = async (req, res) => {
           status: "PASSED"
         });
       }
-    }
-    
-    // Fix the duplicate key issue by dropping the old index
-    try {
-      // Only try to fix the index if we are creating a new attempt
-      if (newAttempt === 'true') {
-        console.log("Attempting to fix index issues for multiple attempts...");
-        const connection = mongoose.connection;
-        
-        if (connection.readyState === 1) { // 1 = connected
-          try {
-            await connection.db.collection('examattendances').dropIndex('examId_1_userId_1');
-            console.log("Successfully dropped old index");
-          } catch (indexError) {
-            console.log("Index might be already fixed or not exist:", indexError.message);
-            // Continue execution regardless
-          }
-        }
-      }
-    } catch (indexError) {
-      console.log("Index operation failed but continuing:", indexError.message);
-      // We continue as the exam might still work
     }
 
     // Find the exam and populate the MCQ questions
@@ -195,72 +173,41 @@ const attendExam = async (req, res) => {
       }
     }
     
+    // Get count of completed attempts to enforce MAX_ATTEMPTS limit
+    const completedAttemptsCount = await ExamAttendance.countDocuments({
+      examId,
+      userId,
+      status: { $in: ["COMPLETED", "TIMED_OUT"] }
+    });
+    
+    if (completedAttemptsCount >= MAX_ATTEMPTS) {
+      console.log(`User ${userId} has reached the maximum number of attempts (${MAX_ATTEMPTS}) for exam ${examId}`);
+      return res.status(403).json({
+        message: `You have reached the maximum number of attempts (${MAX_ATTEMPTS}) for this exam.`,
+        completedAttempts: completedAttemptsCount,
+        maxAttempts: MAX_ATTEMPTS
+      });
+    }
+    
     // Get real attempt count and fix inconsistencies
     const realAttemptCount = await getRealAttemptCount(examId, userId);
     
+    // Check for existing in-progress attempts that need to be canceled when starting a new attempt
     if (newAttempt === 'true') {
-      console.log("Creating new attempt as requested");
-      
-      // Check if previous attempt is completed or timed out
-      const prevAttempt = await ExamAttendance.findOne({ 
-        examId, 
-        userId,
-        status: { $in: ["COMPLETED", "TIMED_OUT"] } 
-      }).sort({ createdAt: -1 });
-      
-      if (prevAttempt) {
-        console.log(`Previous attempt found with status: ${prevAttempt.status}`);
-      } else {
-        console.log("No previous attempts found");
-      }
-      
-      // Calculate next attempt number based on real attempt count
-      const nextAttemptNumber = realAttemptCount + 1;
-      console.log(`Creating new attempt with number: ${nextAttemptNumber}`);
+      console.log(`Creating new attempt (attempt #${realAttemptCount + 1}) as requested`);
       
       try {
         // First, cancel any existing in-progress attempts
-        await ExamAttendance.updateMany(
+        const cancelResult = await ExamAttendance.updateMany(
           { examId, userId, status: "IN_PROGRESS" },
           { status: "TIMED_OUT", endTime: new Date() }
         );
         
-        // Try to fix the duplicate key issue explicitly
-        try {
-          const connection = mongoose.connection;
-          if (connection && connection.readyState === 1) {
-            // Try to drop the problematic index directly
-            try {
-              // Get all indexes
-              const indexes = await connection.db.collection('examattendances').indexes();
-              // Check if the index exists
-              const oldIndex = indexes.find(idx => 
-                idx.name === 'examId_1_userId_1' || 
-                (idx.key && idx.key.examId === 1 && idx.key.userId === 1 && !idx.key.attemptNumber)
-              );
-              
-              if (oldIndex) {
-                await connection.db.collection('examattendances').dropIndex(oldIndex.name);
-                console.log(`Successfully dropped problematic index: ${oldIndex.name}`);
-              }
-            } catch (indexError) {
-              console.log("Index drop failed or not needed:", indexError.message);
-            }
-            
-            // Create the compound index with attemptNumber if it doesn't exist
-            try {
-              await connection.db.collection('examattendances').createIndex(
-                { examId: 1, userId: 1, attemptNumber: 1 },
-                { unique: true }
-              );
-              console.log("Created or verified proper index with attemptNumber");
-            } catch (indexCreateError) {
-              console.log("Index creation failed or already exists:", indexCreateError.message);
-            }
-          }
-        } catch (indexOpsError) {
-          console.log("Index operations failed but continuing:", indexOpsError.message);
-        }
+        console.log(`Canceled ${cancelResult.modifiedCount} in-progress attempts`);
+        
+        // Calculate next attempt number based on real attempt count
+        const nextAttemptNumber = realAttemptCount + 1;
+        console.log(`Using attempt number: ${nextAttemptNumber}`);
         
         // Double check and delete any duplicate documents that might cause conflicts
         try {
@@ -271,7 +218,7 @@ const attendExam = async (req, res) => {
           });
           
           if (existingAttempts.length > 0) {
-            console.log(`Found ${existingAttempts.length} conflicting attempts, removing them`);
+            console.log(`Found ${existingAttempts.length} conflicting attempts with number ${nextAttemptNumber}, removing them`);
             await ExamAttendance.deleteMany({
               examId, 
               userId, 
@@ -282,7 +229,7 @@ const attendExam = async (req, res) => {
           console.log("Cleanup failed but continuing:", cleanupError.message);
         }
         
-        // Create a new attempt
+        // Create a new attempt with explicit attempt number
         attendance = new ExamAttendance({
           examId,
           userId,
@@ -293,8 +240,8 @@ const attendExam = async (req, res) => {
         });
         
         await attendance.save();
-        console.log(`New attendance record created with ID: ${attendance._id}`);
-
+        console.log(`New attendance record created with ID: ${attendance._id} and attempt #${nextAttemptNumber}`);
+        
         // Randomize questions and store in memory
         const randomizedQuestions = shuffleArray(exam.sections.mcqs);
         
@@ -329,59 +276,31 @@ const attendExam = async (req, res) => {
           });
           
           await tmpData.save();
-          console.log("Created temporary data storage with attempt number:", nextAttemptNumber);
+          console.log(`Created temporary data storage for attempt #${nextAttemptNumber}`);
         } catch (tmpError) {
           console.error("Error saving temporary data:", tmpError);
           // Continue anyway, as we have the data in memory
         }
-        
-        console.log("Questions randomized and stored in memory");
       } catch (saveError) {
-        console.error("Error saving attendance record:", saveError);
-        // Check if it's a duplicate key error
+        console.error("Error creating new attempt:", saveError);
+        
         if (saveError.code === 11000) {
-          // Cleanup any stray records and try again with a more aggressive approach
-          try {
-            console.log("Duplicate key detected. Performing thorough cleanup...");
-            
-            // Cancel all in-progress attempts
-            await ExamAttendance.updateMany(
-              { examId, userId, status: "IN_PROGRESS" },
-              { status: "TIMED_OUT", endTime: new Date() }
-            );
-            
-            // Delete any problematic attempts with the next attempt number
-            await ExamAttendance.deleteMany({
-              examId, 
-              userId, 
-              attemptNumber: nextAttemptNumber
-            });
-            
-            // Wait a moment for MongoDB to process the deletes
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Try creating the attempt one more time
-            attendance = new ExamAttendance({
-              examId,
-              userId,
-              totalQuestions: exam.sections.mcqs.length,
-              startTime: new Date(),
-              status: "IN_PROGRESS",
-              attemptNumber: nextAttemptNumber
-            });
-            
-            await attendance.save();
-            console.log(`Successfully created attendance record after cleanup: ${attendance._id}`);
-          } catch (retryError) {
-            console.error("Final attempt to create record failed:", retryError);
-            return res.status(500).json({
-              message: "Could not create a new exam attempt. Please try again later.",
-              error: "Database error"
-            });
-          }
-        } else {
-          throw saveError; // rethrow for the outer catch block
+          console.log("Duplicate key error detected - this usually means an index conflict");
+          
+          // Provide more user-friendly error message
+          return res.status(409).json({
+            message: "Could not create a new attempt due to a database conflict. Please wait a moment and try again.",
+            error: "DuplicateKeyError",
+            details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+          });
         }
+        
+        // For any other error
+        return res.status(500).json({
+          message: "Failed to start a new exam session. Please try again.",
+          error: "DatabaseError",
+          details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+        });
       }
     } else {
       console.log("Looking for existing in-progress attempt");
@@ -393,7 +312,7 @@ const attendExam = async (req, res) => {
       }).sort({ createdAt: -1 });
 
       if (!attendance) {
-        console.log("No in-progress attempt found, creating a new one");
+        console.log("No in-progress attempt found, creating a first attempt");
         
         try {
           // Create first attempt
@@ -459,7 +378,11 @@ const attendExam = async (req, res) => {
               error: "DuplicateKeyError"
             });
           } else {
-            throw saveError; // rethrow for the outer catch block
+            return res.status(500).json({ 
+              message: "Failed to create exam session. Please try again.",
+              error: "DatabaseError", 
+              details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+            });
           }
         }
       } else {
@@ -602,7 +525,7 @@ const attendExam = async (req, res) => {
     console.error("Error in attendExam:", error);
     res.status(500).json({ 
       message: "Failed to start exam session. Please try again.",
-      error: "Internal Server Error", 
+      error: "InternalServerError", 
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -1153,7 +1076,7 @@ const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
     const { statusFilter, search, sort = 'recent', showAll = 'false' } = req.query;
-    const MAX_ATTEMPTS = 2;
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts (increased from 2 to 5)
     
     // Build the query based on filters
     const query = { userId };
@@ -1360,7 +1283,7 @@ const getUserExams = async (req, res) => {
 const myExamHistory = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { status, search, sort = 'recent', includeUnpublished = 'true' } = req.query;
+    const { status, search, sort = 'recent', includeUnpublished = 'true', showAll = 'false' } = req.query;
     
     // Get user details to personalize the response
     const user = await User.findById(userId).select('username firstName lastName email');
@@ -1654,6 +1577,413 @@ const formatUnpublishedExams = (unpublishedExams) => {
   });
 };
 
+// Cancel an in-progress exam attempt
+const cancelInProgressAttempt = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const userId = req.user._id;
+    
+    console.log(`Attempting to cancel in-progress exam ${examId} for user ${userId}`);
+    
+    // Find the in-progress attendance record
+    const inProgressAttempt = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+    
+    if (!inProgressAttempt) {
+      console.log(`No in-progress attempt found for exam ${examId}, user ${userId}`);
+      return res.status(404).json({ 
+        message: "No in-progress exam attempt found to cancel",
+        success: false
+      });
+    }
+    
+    // Update the attempt status to TIMED_OUT
+    inProgressAttempt.status = "TIMED_OUT";
+    inProgressAttempt.endTime = new Date();
+    await inProgressAttempt.save();
+    
+    // Also clear any temporary data
+    try {
+      await TmpExamStudentData.deleteMany({
+        userId,
+        examId,
+        attemptNumber: inProgressAttempt.attemptNumber
+      });
+      console.log(`Temporary data cleared for attempt #${inProgressAttempt.attemptNumber}`);
+    } catch (tmpError) {
+      console.error("Error clearing temporary data:", tmpError);
+      // Continue anyway as the main operation succeeded
+    }
+    
+    // Clear memory data if exists
+    if (userExamData[userId] && userExamData[userId][examId]) {
+      delete userExamData[userId][examId];
+      console.log("Cleared in-memory exam data");
+    }
+    
+    console.log(`Successfully canceled in-progress attempt #${inProgressAttempt.attemptNumber} for exam ${examId}`);
+    
+    return res.status(200).json({
+      message: "Exam attempt canceled successfully",
+      success: true,
+      attemptNumber: inProgressAttempt.attemptNumber
+    });
+    
+  } catch (error) {
+    console.error("Error canceling exam attempt:", error);
+    return res.status(500).json({
+      message: "Failed to cancel exam attempt",
+      error: "InternalServerError",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      success: false
+    });
+  }
+};
+
+// Cancel all in-progress exam attempts for a user
+const cancelAllAttempts = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    console.log(`Attempting to cancel all in-progress exams for user ${userId}`);
+    
+    // Find all in-progress attendance records for this user
+    const inProgressAttempts = await ExamAttendance.find({
+      userId,
+      status: "IN_PROGRESS"
+    });
+    
+    if (!inProgressAttempts || inProgressAttempts.length === 0) {
+      console.log(`No in-progress attempts found for user ${userId}`);
+      return res.status(200).json({ 
+        message: "No in-progress exam attempts found to cancel",
+        count: 0,
+        success: true
+      });
+    }
+    
+    // Get exam IDs for logging purposes
+    const examIds = inProgressAttempts.map(attempt => attempt.examId);
+    console.log(`Found ${inProgressAttempts.length} in-progress attempts for exams: ${examIds.join(', ')}`);
+    
+    // Update all attempts to TIMED_OUT status
+    const updateResult = await ExamAttendance.updateMany(
+      { 
+        userId, 
+        status: "IN_PROGRESS" 
+      },
+      { 
+        status: "TIMED_OUT", 
+        endTime: new Date() 
+      }
+    );
+    
+    // Clean up temporary data for all canceled attempts
+    const attemptNumbers = inProgressAttempts.map(attempt => attempt.attemptNumber);
+    
+    try {
+      // Delete all temporary data for these attempts
+      await TmpExamStudentData.deleteMany({
+        userId,
+        attemptNumber: { $in: attemptNumbers }
+      });
+      console.log(`Temporary data cleared for ${attemptNumbers.length} attempts`);
+    } catch (tmpError) {
+      console.error("Error clearing temporary data:", tmpError);
+      // Continue anyway as the main operation succeeded
+    }
+    
+    // Clear memory data for all exams
+    if (userExamData[userId]) {
+      for (const examId of examIds) {
+        if (userExamData[userId][examId]) {
+          delete userExamData[userId][examId];
+        }
+      }
+      console.log("Cleared in-memory exam data");
+    }
+    
+    console.log(`Successfully canceled ${updateResult.modifiedCount} in-progress attempts`);
+    
+    return res.status(200).json({
+      message: `Successfully canceled ${updateResult.modifiedCount} in-progress exam attempts`,
+      count: updateResult.modifiedCount,
+      success: true
+    });
+    
+  } catch (error) {
+    console.error("Error canceling all exam attempts:", error);
+    return res.status(500).json({
+      message: "Failed to cancel exam attempts",
+      error: "InternalServerError",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      success: false
+    });
+  }
+};
+
+// Get all users' exam history (admin only)
+const adminGetAllUserHistory = async (req, res) => {
+  try {
+    // Query parameters for filtering and pagination
+    const { 
+      examId, userId, status, search, 
+      page = 1, limit = 10, sort = 'recent',
+      fromDate, toDate
+    } = req.query;
+    
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    // Build the initial query
+    let query = {};
+    
+    // Apply filters if provided
+    if (examId) {
+      query.examId = mongoose.Types.ObjectId(examId);
+    }
+    
+    if (userId) {
+      query.userId = mongoose.Types.ObjectId(userId);
+    }
+    
+    if (status && ['IN_PROGRESS', 'COMPLETED', 'TIMED_OUT'].includes(status)) {
+      query.status = status;
+    }
+    
+    // Date range filters
+    if (fromDate || toDate) {
+      query.startTime = {};
+      
+      if (fromDate) {
+        query.startTime.$gte = new Date(fromDate);
+      }
+      
+      if (toDate) {
+        const endDate = new Date(toDate);
+        endDate.setHours(23, 59, 59, 999); // Set to end of day
+        query.startTime.$lte = endDate;
+      }
+    }
+    
+    // Get total count for pagination
+    const total = await ExamAttendance.countDocuments(query);
+    
+    // Create sorting configuration
+    let sortConfig = {};
+    if (sort === 'recent') {
+      sortConfig = { startTime: -1 };
+    } else if (sort === 'score') {
+      sortConfig = { score: -1 };
+    } else if (sort === 'username') {
+      // We'll handle this after populating
+    }
+    
+    // Find exam attendances with populated data
+    let examAttendances = await ExamAttendance.find(query)
+      .populate({
+        path: 'examId',
+        select: 'title description duration status'
+      })
+      .populate({
+        path: 'userId',
+        select: 'username firstName lastName email'
+      })
+      .sort(sortConfig)
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum);
+    
+    // Apply text search filter if provided (for populated fields)
+    if (search) {
+      const searchLower = search.toLowerCase();
+      examAttendances = examAttendances.filter(attendance => {
+        // Check if exam title matches
+        const examTitle = attendance.examId?.title?.toLowerCase() || '';
+        
+        // Check if user details match
+        const username = attendance.userId?.username?.toLowerCase() || '';
+        const firstName = attendance.userId?.firstName?.toLowerCase() || '';
+        const lastName = attendance.userId?.lastName?.toLowerCase() || '';
+        const email = attendance.userId?.email?.toLowerCase() || '';
+        
+        return examTitle.includes(searchLower) ||
+               username.includes(searchLower) ||
+               firstName.includes(searchLower) ||
+               lastName.includes(searchLower) ||
+               email.includes(searchLower);
+      });
+    }
+    
+    // Sort by username if requested (after population)
+    if (sort === 'username') {
+      examAttendances.sort((a, b) => {
+        const usernameA = a.userId?.username?.toLowerCase() || '';
+        const usernameB = b.userId?.username?.toLowerCase() || '';
+        return usernameA.localeCompare(usernameB);
+      });
+    }
+    
+    // Format the exam attendance records
+    const formattedHistory = examAttendances.map(attendance => {
+      // Calculate percentage
+      const percentage = attendance.totalQuestions > 0 
+        ? ((attendance.score / attendance.totalQuestions) * 100).toFixed(2) 
+        : 0;
+      
+      // Determine if passed (60% threshold)
+      const passed = parseFloat(percentage) >= 60;
+      
+      // Format user details
+      const user = attendance.userId || { username: 'Unknown' };
+      const userName = user.firstName && user.lastName 
+        ? `${user.firstName} ${user.lastName}` 
+        : user.username;
+      
+      // Calculate duration
+      let duration = null;
+      if (attendance.endTime && attendance.startTime) {
+        duration = Math.round((new Date(attendance.endTime) - new Date(attendance.startTime)) / 60000); // in minutes
+      }
+      
+      return {
+        attendanceId: attendance._id,
+        examId: attendance.examId?._id,
+        examTitle: attendance.examId?.title || 'Unknown Exam',
+        examDescription: attendance.examId?.description || '',
+        user: {
+          userId: user._id,
+          name: userName,
+          username: user.username || 'Unknown',
+          email: user.email || 'Unknown'
+        },
+        attemptNumber: attendance.attemptNumber || 1,
+        startTime: attendance.startTime,
+        endTime: attendance.endTime,
+        status: attendance.status,
+        statusText: getStatusDisplay(attendance.status),
+        duration: duration ? `${duration} min` : 'N/A',
+        score: attendance.score,
+        totalQuestions: attendance.totalQuestions,
+        attemptedQuestions: attendance.attemptedQuestions,
+        percentage: `${percentage}%`,
+        result: passed ? 'PASSED' : 'FAILED',
+        passed: passed
+      };
+    });
+    
+    // Get exam summary statistics
+    const examSummary = {};
+    examAttendances.forEach(attendance => {
+      const examId = attendance.examId?._id?.toString();
+      if (!examId) return;
+      
+      if (!examSummary[examId]) {
+        examSummary[examId] = {
+          examId,
+          title: attendance.examId?.title || 'Unknown',
+          attemptsCount: 0,
+          passedCount: 0,
+          failedCount: 0
+        };
+      }
+      
+      examSummary[examId].attemptsCount++;
+      
+      if (attendance.status === 'COMPLETED' || attendance.status === 'TIMED_OUT') {
+        const percentage = attendance.totalQuestions > 0 
+          ? (attendance.score / attendance.totalQuestions) * 100
+          : 0;
+        
+        if (percentage >= 60) {
+          examSummary[examId].passedCount++;
+        } else {
+          examSummary[examId].failedCount++;
+        }
+      }
+    });
+    
+    // Prepare user summary statistics
+    const userSummary = {};
+    examAttendances.forEach(attendance => {
+      const userId = attendance.userId?._id?.toString();
+      if (!userId) return;
+      
+      if (!userSummary[userId]) {
+        const user = attendance.userId;
+        userSummary[userId] = {
+          userId,
+          username: user.username,
+          name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.username,
+          attemptsCount: 0,
+          examsCount: new Set(),
+          passedCount: 0,
+          failedCount: 0
+        };
+      }
+      
+      userSummary[userId].attemptsCount++;
+      userSummary[userId].examsCount.add(attendance.examId?._id?.toString());
+      
+      if (attendance.status === 'COMPLETED' || attendance.status === 'TIMED_OUT') {
+        const percentage = attendance.totalQuestions > 0 
+          ? (attendance.score / attendance.totalQuestions) * 100
+          : 0;
+        
+        if (percentage >= 60) {
+          userSummary[userId].passedCount++;
+        } else {
+          userSummary[userId].failedCount++;
+        }
+      }
+    });
+    
+    // Convert Sets to counts in userSummary
+    Object.values(userSummary).forEach(user => {
+      user.examsCount = user.examsCount.size;
+    });
+    
+    res.status(200).json({
+      message: "All users' exam history retrieved successfully",
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      count: formattedHistory.length,
+      history: formattedHistory,
+      summary: {
+        exams: Object.values(examSummary),
+        users: Object.values(userSummary)
+      },
+      filters: {
+        available: {
+          status: ['all', 'IN_PROGRESS', 'COMPLETED', 'TIMED_OUT'],
+          sort: ['recent', 'score', 'username']
+        },
+        applied: {
+          status: status || 'all',
+          sort: sort || 'recent',
+          search: search || '',
+          examId: examId || null,
+          userId: userId || null,
+          fromDate: fromDate || null,
+          toDate: toDate || null
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error retrieving all users' exam history:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 module.exports = {
   attendExam,
   submitAnswer,
@@ -1662,5 +1992,8 @@ module.exports = {
   getExamResult,
   reviewExamQuestions,
   getUserExams,
-  myExamHistory
+  myExamHistory,
+  cancelInProgressAttempt,
+  cancelAllAttempts,
+  adminGetAllUserHistory
 };

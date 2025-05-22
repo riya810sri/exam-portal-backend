@@ -25,6 +25,16 @@ router.get("/approved", authenticateUser, checkRole("admin"),
 router.get("/unpublished", authenticateUser, checkRole("admin"), 
   examController.getUnpublishedExams ? examController.getUnpublishedExams : fallback("getUnpublishedExams"));
 
+// Admin routes for archived exams
+router.get("/archived", authenticateUser, checkRole("admin"), 
+  examController.getArchivedExams ? examController.getArchivedExams : fallback("getArchivedExams"));
+
+router.get("/archived/:id", authenticateUser, checkRole("admin"), 
+  examController.getArchivedExamById ? examController.getArchivedExamById : fallback("getArchivedExamById"));
+
+router.post("/archive-completed", authenticateUser, checkRole("admin"), 
+  examController.archiveCompletedExams ? examController.archiveCompletedExams : fallback("archiveCompletedExams"));
+
 // All authenticated users can view a single exam (but only published ones for non-admins)
 router.get("/:id", authenticateUser, 
   examController.getExamById ? examController.getExamById : fallback("getExamById"));

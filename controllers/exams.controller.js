@@ -1,5 +1,6 @@
 const Exam = require("../models/exam.model");
 const ExamAttendance = require("../models/examAttendance.model");
+const ExamHistory = require("../models/examHistory.model");
 
 const createExam = async (req, res) => {
   try {
@@ -37,7 +38,7 @@ const getAllExams = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const MAX_ATTEMPTS = 2; // Maximum allowed attempts per exam
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts per exam (increased from 2 to 5)
     
     // Build the query
     let filter = {};
@@ -266,25 +267,71 @@ const updateExam = async (req, res) => {
     
     console.log(`Found exam with status: ${exam.status}`);
     
-    // Check for attempts if it's a published exam
-    if (exam.status === "PUBLISHED") {
-      const attemptCount = await ExamAttendance.countDocuments({ examId });
-      console.log(`Exam has ${attemptCount} attempt(s)`);
-      
-      // If there are attempts, we don't allow certain changes
-      if (attemptCount > 0) {
-        console.log(`Cannot modify exam with ${attemptCount} attempts`);
-        return res.status(403).json({
-          message: "Cannot update exam with existing attempts. Please create a new version instead.",
-          attempts: attemptCount
-        });
-      }
+    // Check if the user is the creator of the exam or an admin
+    const isAdmin = req.user.role === "admin";
+    const isCreator = exam.createdBy && exam.createdBy.toString() === req.user._id.toString();
+    
+    if (!isAdmin && !isCreator) {
+      console.log(`User ${req.user._id} is not authorized to update exam ${examId}`);
+      return res.status(403).json({
+        message: "You don't have permission to update this exam. Only creators and admins can update exams."
+      });
     }
     
-    // Admin case - admins can update any exam with proper status handling
-    if (req.user.role === "admin") {
+    // Check for attempts if it's a published exam
+    let hasAttempts = false;
+    let attemptCount = 0;
+    
+    if (exam.status === "PUBLISHED") {
+      attemptCount = await ExamAttendance.countDocuments({ examId });
+      hasAttempts = attemptCount > 0;
+      console.log(`Exam has ${attemptCount} attempt(s)`);
+    }
+    
+    // Prepare update data
+    let updateData = { title, description, duration };
+    
+    // Handle sections update based on exam status and attempts
+    if (hasAttempts) {
+      // For exams with attempts, we need to be careful with question modifications
+      console.log("Exam has attempts - applying restricted update rules");
+      
+      // Allow adding new questions but don't modify existing ones
+      if (sections && sections.mcqs) {
+        // Get existing questions from the database
+        const existingMcqs = exam.sections.mcqs.map(q => q.toString());
+        
+        // Split provided questions into existing and new
+        const providedMcqs = sections.mcqs.filter(q => q._id); // Questions with IDs
+        const newMcqs = sections.mcqs.filter(q => !q._id); // Questions without IDs (new ones)
+        
+        // Verify no existing questions were modified or removed
+        const modifiedExistingQuestions = providedMcqs.some(q => !existingMcqs.includes(q._id.toString()));
+        
+        if (modifiedExistingQuestions) {
+          return res.status(403).json({
+            message: "Cannot modify or remove existing questions for an exam with attempts. You can only add new questions.",
+            attempts: attemptCount
+          });
+        }
+        
+        // Only allow adding new questions
+        if (newMcqs.length > 0) {
+          console.log(`Adding ${newMcqs.length} new questions to exam with attempts`);
+          updateData.sections = {
+            mcqs: [...existingMcqs, ...newMcqs],
+            shortAnswers: exam.sections.shortAnswers
+          };
+        }
+      }
+    } else {
+      // No attempts, allow full section update
+      updateData.sections = sections;
+    }
+    
+    // Admin case - admins can update any exam
+    if (isAdmin) {
       console.log("Admin user - full update rights granted");
-      let updateData = { title, description, duration, sections };
       
       // Find and update the exam
       const updatedExam = await Exam.findByIdAndUpdate(
@@ -295,23 +342,56 @@ const updateExam = async (req, res) => {
       
       console.log(`Admin successfully updated exam ${examId}`);
       return res.json({ 
-        message: "Exam updated successfully by admin", 
+        message: hasAttempts 
+          ? "Exam updated successfully by admin (restricted mode due to existing attempts)" 
+          : "Exam updated successfully by admin", 
         exam: updatedExam,
-        status: updatedExam.status 
+        status: updatedExam.status,
+        hasAttempts,
+        attemptCount
       });
     }
     
-    // Non-admin case - restrict updates based on status
-    if (exam.status !== "PENDING") {
-      console.log(`Non-admin cannot update exam with status ${exam.status}`);
-      return res.status(403).json({
-        message: "Cannot update exam. Only pending exams can be updated by non-admin users."
+    // Non-admin case - additional restrictions based on status
+    if (exam.status === "PUBLISHED" && !isAdmin) {
+      console.log("Non-admin updating published exam");
+      
+      // For published exams, non-admins can only update certain fields
+      delete updateData.sections; // Non-admins cannot modify sections of published exams
+      
+      const updatedExam = await Exam.findByIdAndUpdate(
+        examId,
+        updateData,
+        { new: true }
+      ).populate("sections.mcqs sections.shortAnswers");
+      
+      console.log(`Non-admin successfully updated published exam ${examId} (restricted to metadata only)`);
+      return res.json({
+        message: "Exam metadata updated successfully. Note: Question modifications for published exams require admin privileges.",
+        exam: updatedExam,
+        status: updatedExam.status,
+        hasAttempts,
+        attemptCount
+      });
+    } else if (exam.status !== "PENDING" && !isAdmin) {
+      // For approved but not published exams
+      console.log(`Non-admin updating exam with status ${exam.status}`);
+      
+      const updatedExam = await Exam.findByIdAndUpdate(
+        examId,
+        updateData,
+        { new: true }
+      ).populate("sections.mcqs sections.shortAnswers");
+      
+      console.log(`Non-admin successfully updated ${exam.status} exam ${examId}`);
+      return res.json({
+        message: `Exam updated successfully (${exam.status} status)`,
+        exam: updatedExam,
+        status: updatedExam.status
       });
     }
     
-    // Non-admin users updating a pending exam
-    let updateData = { title, description, duration, sections };
-    
+    // Non-admin users updating a pending exam (original behavior preserved)
     const updatedExam = await Exam.findByIdAndUpdate(
       examId,
       updateData,
@@ -652,6 +732,264 @@ const attendExam = async (req, res) => {
   }
 };
 
+// Identify and archive completed exams
+const archiveCompletedExams = async (req, res) => {
+  try {
+    console.log("Starting exam archiving process");
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts per exam (increased from 2 to 5)
+    const archivedBy = req.user._id;
+    let archivedCount = 0;
+    let errorCount = 0;
+    
+    // Find all published exams
+    const publishedExams = await Exam.find({ status: "PUBLISHED" });
+    
+    if (!publishedExams || publishedExams.length === 0) {
+      return res.status(200).json({ 
+        message: "No published exams found to archive",
+        examsArchived: 0
+      });
+    }
+    
+    console.log(`Found ${publishedExams.length} published exams to check for archiving`);
+    
+    // For each exam, check if all allowed attempts are completed
+    for (const exam of publishedExams) {
+      try {
+        const examId = exam._id;
+        
+        // Get all attendance records for this exam
+        const attendanceRecords = await ExamAttendance.find({ examId });
+        
+        if (!attendanceRecords || attendanceRecords.length === 0) {
+          // No attempts yet, skip this exam
+          continue;
+        }
+        
+        // Group attendance records by user
+        const userAttemptsMap = {};
+        attendanceRecords.forEach(record => {
+          const userId = record.userId.toString();
+          if (!userAttemptsMap[userId]) {
+            userAttemptsMap[userId] = [];
+          }
+          userAttemptsMap[userId].push(record);
+        });
+        
+        // Check if all users have completed their attempts
+        let allAttemptsCompleted = true;
+        let totalCompletedAttempts = 0;
+        let totalPassedAttempts = 0;
+        
+        Object.values(userAttemptsMap).forEach(attempts => {
+          // Count completed/timed out attempts
+          const completedAttempts = attempts.filter(a => 
+            a.status === "COMPLETED" || a.status === "TIMED_OUT"
+          );
+          
+          // Count attempts where user passed (score >= 60%)
+          const passedAttempts = completedAttempts.filter(a => {
+            const percentage = (a.score / a.totalQuestions) * 100;
+            return percentage >= 60;
+          });
+          
+          totalCompletedAttempts += completedAttempts.length;
+          totalPassedAttempts += passedAttempts.length;
+          
+          // If a user has at least one pass OR has reached max attempts, they're done
+          const userIsDone = passedAttempts.length > 0 || completedAttempts.length >= MAX_ATTEMPTS;
+          
+          // If any user still has attempts available, don't archive
+          if (!userIsDone) {
+            allAttemptsCompleted = false;
+          }
+        });
+        
+        // Skip exams that don't have all attempts completed
+        if (!allAttemptsCompleted) {
+          continue;
+        }
+        
+        // Calculate pass rate
+        const totalUsers = Object.keys(userAttemptsMap).length;
+        const passedUsers = Object.values(userAttemptsMap).filter(attempts => {
+          return attempts.some(a => {
+            if (a.status !== "COMPLETED" && a.status !== "TIMED_OUT") return false;
+            const percentage = (a.score / a.totalQuestions) * 100;
+            return percentage >= 60;
+          });
+        }).length;
+        
+        const passRate = totalUsers > 0 ? (passedUsers / totalUsers) * 100 : 0;
+        
+        console.log(`Exam "${exam.title}" (${examId}) has all attempts completed. Archiving...`);
+        
+        // Create a history record
+        const examHistory = new ExamHistory({
+          originalExamId: examId,
+          title: exam.title,
+          description: exam.description,
+          duration: exam.duration,
+          sections: exam.sections,
+          createdBy: exam.createdBy,
+          createdAt: exam.createdAt,
+          approvedBy: exam.approvedBy,
+          approvedAt: exam.approvedAt,
+          publishedAt: exam.publishedAt,
+          archivedAt: new Date(),
+          archivedBy: archivedBy,
+          totalAttempts: totalCompletedAttempts,
+          totalPassedAttempts: totalPassedAttempts,
+          passRate: passRate.toFixed(2)
+        });
+        
+        await examHistory.save();
+        
+        // Delete the original exam
+        await Exam.findByIdAndDelete(examId);
+        
+        archivedCount++;
+        console.log(`Successfully archived exam "${exam.title}" (${examId})`);
+      } catch (examError) {
+        console.error(`Error processing exam ${exam._id}:`, examError);
+        errorCount++;
+      }
+    }
+    
+    if (archivedCount > 0) {
+      return res.status(200).json({
+        message: `Successfully archived ${archivedCount} completed exams`,
+        examsArchived: archivedCount,
+        errors: errorCount
+      });
+    } else {
+      return res.status(200).json({
+        message: "No exams were eligible for archiving at this time",
+        examsArchived: 0,
+        errors: errorCount
+      });
+    }
+    
+  } catch (error) {
+    console.error("Error archiving completed exams:", error);
+    return res.status(500).json({
+      error: "Internal Server Error",
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// Get archived exam history with filters and pagination
+const getArchivedExams = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, sortBy = 'archivedAt', sortOrder = 'desc' } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    // Build query with search filter if provided
+    let query = {};
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Get total count for pagination
+    const totalCount = await ExamHistory.countDocuments(query);
+    
+    // Determine sort order
+    const sortOptions = {};
+    sortOptions[sortBy || 'archivedAt'] = sortOrder === 'asc' ? 1 : -1;
+    
+    // Find archived exams with pagination and sorting
+    const archivedExams = await ExamHistory.find(query)
+      .populate("createdBy", "username firstName lastName")
+      .populate("approvedBy", "username firstName lastName")
+      .populate("archivedBy", "username firstName lastName")
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .sort(sortOptions);
+    
+    // Format response data
+    const formattedExams = archivedExams.map(exam => {
+      return {
+        _id: exam._id,
+        originalExamId: exam.originalExamId,
+        title: exam.title,
+        description: exam.description,
+        duration: exam.duration,
+        totalAttempts: exam.totalAttempts,
+        totalPassedAttempts: exam.totalPassedAttempts,
+        passRate: `${exam.passRate}%`,
+        questionCount: exam.sections.mcqs.length,
+        createdBy: exam.createdBy ? {
+          _id: exam.createdBy._id,
+          username: exam.createdBy.username,
+          name: `${exam.createdBy.firstName || ''} ${exam.createdBy.lastName || ''}`.trim() || exam.createdBy.username
+        } : null,
+        approvedBy: exam.approvedBy ? {
+          _id: exam.approvedBy._id,
+          username: exam.approvedBy.username,
+          name: `${exam.approvedBy.firstName || ''} ${exam.approvedBy.lastName || ''}`.trim() || exam.approvedBy.username
+        } : null,
+        archivedBy: exam.archivedBy ? {
+          _id: exam.archivedBy._id,
+          username: exam.archivedBy.username,
+          name: `${exam.archivedBy.firstName || ''} ${exam.archivedBy.lastName || ''}`.trim() || exam.archivedBy.username
+        } : null,
+        createdAt: exam.createdAt,
+        publishedAt: exam.publishedAt,
+        archivedAt: exam.archivedAt
+      };
+    });
+    
+    res.status(200).json({
+      message: "Archived exams retrieved successfully",
+      page: pageNum,
+      limit: limitNum,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      exams: formattedExams
+    });
+    
+  } catch (error) {
+    console.error("Error getting archived exams:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// Get details of a specific archived exam
+const getArchivedExamById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const archivedExam = await ExamHistory.findById(id)
+      .populate("createdBy", "username firstName lastName")
+      .populate("approvedBy", "username firstName lastName")
+      .populate("archivedBy", "username firstName lastName")
+      .populate("sections.mcqs sections.shortAnswers");
+    
+    if (!archivedExam) {
+      return res.status(404).json({ message: "Archived exam not found" });
+    }
+    
+    res.status(200).json(archivedExam);
+    
+  } catch (error) {
+    console.error("Error getting archived exam:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message 
+    });
+  }
+};
+
 module.exports = {
   createExam,
   getAllExams,
@@ -665,4 +1003,7 @@ module.exports = {
   getApprovedExams,
   getUnpublishedExams,
   attendExam,
+  archiveCompletedExams,
+  getArchivedExams,
+  getArchivedExamById,
 };
