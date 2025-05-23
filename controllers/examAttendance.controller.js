@@ -835,7 +835,7 @@ const completeExam = async (req, res) => {
     
     // Make sure we explicitly send a response
     return res.status(200).json({
-      message: "Exam completed successfully",
+      // message: "Exam completed successfully",
       score: score,
       totalQuestions: attendance.totalQuestions,
       attemptedQuestions: attendance.attemptedQuestions,
