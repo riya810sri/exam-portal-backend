@@ -138,13 +138,19 @@ const getAllExams = async (req, res) => {
         }
       });
       
+      // Calculate total questions (MCQs + Short Answers)
+      const mcqCount = exam.sections?.mcqs?.length || 0;
+      const shortAnswerCount = exam.sections?.shortAnswers?.length || 0;
+      const totalQuestions = mcqCount + shortAnswerCount;
+      
       return {
         _id: exam._id,
         title: exam.title,
         description: exam.description,
         duration: exam.duration,
         status: exam.status,
-        questionCount: exam.sections.mcqs.length,
+        totalQuestions: totalQuestions,
+        questionCount: totalQuestions, // Keep for backward compatibility
         attempts: attempts.length,
         publishedAt: exam.publishedAt,
         // User's attempt status for this exam
@@ -299,7 +305,7 @@ const updateExam = async (req, res) => {
       // Allow adding new questions but don't modify existing ones
       if (sections && sections.mcqs) {
         // Get existing questions from the database
-        const existingMcqs = exam.sections.mcqs.map(q => q.toString());
+        const existingMcqs = (exam.sections?.mcqs || []).map(q => q.toString());
         
         // Split provided questions into existing and new
         const providedMcqs = sections.mcqs.filter(q => q._id); // Questions with IDs
@@ -320,7 +326,7 @@ const updateExam = async (req, res) => {
           console.log(`Adding ${newMcqs.length} new questions to exam with attempts`);
           updateData.sections = {
             mcqs: [...existingMcqs, ...newMcqs],
-            shortAnswers: exam.sections.shortAnswers
+            shortAnswers: exam.sections?.shortAnswers || []
           };
         }
       }
@@ -596,8 +602,8 @@ const getUnpublishedExams = async (req, res) => {
     
     // Format response data with additional metadata
     const formattedExams = await Promise.all(unpublishedExams.map(async (exam) => {
-      // Get question count
-      const questionCount = exam.sections.mcqs.length;
+      // Calculate total questions (MCQs + Short Answers)
+      const questionCount = exam.sections.mcqs.length + exam.sections.shortAnswers.length;
       
       // Check if there are any attempts
       const attemptCount = await ExamAttendance.countDocuments({ examId: exam._id });
@@ -676,10 +682,12 @@ const attendExam = async (req, res) => {
 
     if (!attendance) {
       // Create new attendance record
+      const mcqCount = exam.sections?.mcqs?.length || 0;
+      const shortAnswerCount = exam.sections?.shortAnswers?.length || 0;
       attendance = new ExamAttendance({
         examId,
         userId,
-        totalQuestions: exam.sections.mcqs.length,
+        totalQuestions: mcqCount + shortAnswerCount,
         startTime: new Date(),
         status: "IN_PROGRESS"
       });
@@ -687,7 +695,7 @@ const attendExam = async (req, res) => {
     }
 
     // Get total number of MCQ questions
-    const totalQuestions = exam.sections.mcqs.length;
+    const totalQuestions = exam.sections?.mcqs?.length || 0;
     
     // Calculate pagination
     const startIndex = (page - 1) * limit;
