@@ -3,48 +3,146 @@ const Exam = require("../models/exam.model");
 
 const addQuestion = async (req, res) => {
   try {
-    const { examId, questions } = req.body;
+    const { examId, questions, question } = req.body;
 
+    // Validate examId
+    if (!examId) {
+      return res.status(400).json({ message: "Exam ID is required" });
+    }
+
+    // Check if exam exists
     const examExists = await Exam.findById(examId);
     if (!examExists) {
       return res.status(404).json({ message: "Exam not found" });
     }
 
-    const createdQuestions = [];
-    for (const questionData of questions) {
-      // Map incoming fields to match schema
-      const questionDoc = {
-        examId,
-        type: questionData.type,
-        questionText: questionData.text || questionData.questionText, // Handle both field names
-        options: questionData.options,
-        correctAnswer: questionData.correctAnswer,
-      };
+    // Handle both single question object and multiple questions array
+    let questionsToProcess = [];
+    
+    if (questions && Array.isArray(questions)) {
+      // Multiple questions scenario
+      questionsToProcess = questions;
+    } else if (question && typeof question === 'object') {
+      // Single question scenario
+      questionsToProcess = [question];
+    } else if (questions && !Array.isArray(questions)) {
+      // Single question passed as 'questions' field
+      questionsToProcess = [questions];
+    } else {
+      return res.status(400).json({ 
+        message: "Please provide either 'question' object or 'questions' array" 
+      });
+    }
 
-      // Create and save the question
-      const question = new Question(questionDoc);
-      const savedQuestion = await question.save();
-      createdQuestions.push(savedQuestion);
+    // Validate that we have at least one question
+    if (questionsToProcess.length === 0) {
+      return res.status(400).json({ message: "At least one question is required" });
+    }
 
-      // Update the exam's sections with the newly created question ID
-      if (question.type === "MCQ") {
-        examExists.sections.mcqs.push(savedQuestion._id);
-      } else if (question.type === "ShortAnswer") {
-        examExists.sections.shortAnswers.push(savedQuestion._id);
+    // Validate questions before processing
+    for (let i = 0; i < questionsToProcess.length; i++) {
+      const questionData = questionsToProcess[i];
+      
+      if (!questionData.type) {
+        return res.status(400).json({ 
+          message: `Question ${i + 1}: Type is required (MCQ, ShortAnswer, or Practical)` 
+        });
       }
+      
+      if (!questionData.text && !questionData.questionText) {
+        return res.status(400).json({ 
+          message: `Question ${i + 1}: Question text is required` 
+        });
+      }
+      
+      if (!questionData.correctAnswer) {
+        return res.status(400).json({ 
+          message: `Question ${i + 1}: Correct answer is required` 
+        });
+      }
+      
+      // Validate MCQ specific requirements
+      if (questionData.type === "MCQ") {
+        if (!questionData.options || !Array.isArray(questionData.options) || questionData.options.length < 2) {
+          return res.status(400).json({ 
+            message: `Question ${i + 1}: MCQ questions must have at least 2 options` 
+          });
+        }
+      }
+    }
+
+    const createdQuestions = [];
+    const addedMCQs = [];
+    const addedShortAnswers = [];
+
+    // Process each question
+    for (let i = 0; i < questionsToProcess.length; i++) {
+      const questionData = questionsToProcess[i];
+      
+      try {
+        // Map incoming fields to match schema
+        const questionDoc = {
+          examId,
+          type: questionData.type,
+          questionText: questionData.text || questionData.questionText,
+          options: questionData.options,
+          correctAnswer: questionData.correctAnswer,
+        };
+
+        // Create and save the question
+        const question = new Question(questionDoc);
+        const savedQuestion = await question.save();
+        createdQuestions.push(savedQuestion);
+
+        // Track questions by type for exam sections update
+        if (question.type === "MCQ") {
+          addedMCQs.push(savedQuestion._id);
+        } else if (question.type === "ShortAnswer") {
+          addedShortAnswers.push(savedQuestion._id);
+        }
+        
+      } catch (questionError) {
+        console.error(`Error creating question ${i + 1}:`, questionError);
+        return res.status(400).json({ 
+          message: `Error creating question ${i + 1}: ${questionError.message}` 
+        });
+      }
+    }
+
+    // Update exam sections with all newly created question IDs
+    if (addedMCQs.length > 0) {
+      examExists.sections.mcqs.push(...addedMCQs);
+    }
+    if (addedShortAnswers.length > 0) {
+      examExists.sections.shortAnswers.push(...addedShortAnswers);
     }
 
     // Save the updated exam
     await examExists.save();
 
+    // Prepare response
+    const responseMessage = questionsToProcess.length === 1 
+      ? "Question created successfully" 
+      : `${questionsToProcess.length} questions created successfully`;
+
     res.status(201).json({
-      message: "Questions created successfully",
+      message: responseMessage,
       questions: createdQuestions,
+      summary: {
+        total: createdQuestions.length,
+        mcqs: addedMCQs.length,
+        shortAnswers: addedShortAnswers.length,
+        examId: examId
+      }
     });
+    
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+    console.error("Error in addQuestion:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
