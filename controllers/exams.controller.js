@@ -514,15 +514,11 @@ const unpublishExam = async (req, res) => {
       });
     }
     
-    // Check for existing attempts
+    // Check for existing attempts (for logging purposes only)
     const attemptCount = await ExamAttendance.countDocuments({ examId });
     
-    if (attemptCount > 0) {
-      return res.status(400).json({ 
-        message: "Cannot unpublish exam that has already been attempted by users.",
-        attempts: attemptCount
-      });
-    }
+    // Note: Previously, exams with attempts couldn't be unpublished
+    // Now allowing unpublishing even if there are attempts for administrative flexibility
     
     // Update exam status back to APPROVED
     exam.status = "APPROVED";
@@ -536,7 +532,11 @@ const unpublishExam = async (req, res) => {
         _id: exam._id,
         title: exam.title,
         status: exam.status
-      }
+      },
+      ...(attemptCount > 0 && { 
+        note: `This exam had ${attemptCount} attempt(s) before being unpublished.`,
+        attempts: attemptCount 
+      })
     });
     
   } catch (error) {
