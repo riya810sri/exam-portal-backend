@@ -109,12 +109,13 @@ const verifyOTP = async (req, res) => {
       });
     }
     
-    // Increment verification attempts
-    user.verificationAttempts += 1;
-    
     // Check if OTP has expired
     if (user.otpExpiry && new Date() > new Date(user.otpExpiry)) {
-      await user.save(); // Save the attempt increment
+      // Increment verification attempts using updateOne
+      await User.updateOne(
+        { _id: user._id },
+        { $inc: { verificationAttempts: 1 } }
+      );
       return res.status(400).json({ 
         message: "OTP has expired. Please request a new OTP.", 
         expired: true 
@@ -123,20 +124,31 @@ const verifyOTP = async (req, res) => {
     
     // Check if OTP matches
     if (user.verificationOTP !== otp) {
-      await user.save(); // Save the attempt increment
+      // Increment verification attempts using updateOne
+      await User.updateOne(
+        { _id: user._id },
+        { $inc: { verificationAttempts: 1 } }
+      );
       return res.status(400).json({ 
         message: "Invalid OTP. Please try again.", 
-        remainingAttempts: 5 - user.verificationAttempts 
+        remainingAttempts: 5 - (user.verificationAttempts + 1)
       });
     }
     
-    // OTP is valid, mark user as verified
-    user.isVerified = true;
-    user.verificationOTP = undefined; // Clear OTP
-    user.otpExpiry = undefined; // Clear expiry
-    user.verificationAttempts = 0; // Reset attempts
-    
-    await user.save();
+    // OTP is valid, mark user as verified using updateOne
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: { 
+          isVerified: true,
+          verificationAttempts: 0
+        },
+        $unset: {
+          verificationOTP: "",
+          otpExpiry: ""
+        }
+      }
+    );
     
     res.status(200).json({ 
       message: "Email verified successfully. You can now login to your account.", 
@@ -175,12 +187,17 @@ const resendOTP = async (req, res) => {
     const otp = generateOTP();
     const otpExpiry = calculateOTPExpiry();
     
-    // Update user with new OTP
-    user.verificationOTP = otp;
-    user.otpExpiry = otpExpiry;
-    user.verificationAttempts = 0; // Reset attempts
-    
-    await user.save();
+    // Update user with new OTP using updateOne
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          verificationOTP: otp,
+          otpExpiry: otpExpiry,
+          verificationAttempts: 0
+        }
+      }
+    );
     
     // Send verification OTP email
     try {
@@ -281,11 +298,16 @@ const forgotPassword = async (req, res) => {
     const resetTokenExpiry = new Date();
     resetTokenExpiry.setHours(resetTokenExpiry.getHours() + 1);
     
-    // Store token in user record
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpiry = resetTokenExpiry;
-    
-    await user.save();
+    // Store token in user record using updateOne to avoid validation issues
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetPasswordToken: resetToken,
+          resetPasswordExpiry: resetTokenExpiry
+        }
+      }
+    );
     
     // Send password reset email
     try {
@@ -390,13 +412,20 @@ const resetPassword = async (req, res) => {
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     
-    // Update user's password and clear reset token fields
-    user.password = hashedPassword;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpiry = undefined;
-    user.resetOTPVerified = false;
-    
-    await user.save();
+    // Update user's password and clear reset token fields using updateOne to avoid validation issues
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          password: hashedPassword
+        },
+        $unset: {
+          resetPasswordToken: "",
+          resetPasswordExpiry: "",
+          resetOTPVerified: ""
+        }
+      }
+    );
     
     // Invalidate any existing sessions for security
     await Session.deleteMany({ userId: user._id });
@@ -455,8 +484,10 @@ const verifyResetOTP = async (req, res) => {
     }
     
     // Mark the OTP as verified but keep it for the actual password reset step
-    user.resetOTPVerified = true;
-    await user.save();
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { resetOTPVerified: true } }
+    );
     
     res.status(200).json({ 
       message: "OTP verified successfully. You can now reset your password.", 
@@ -500,12 +531,17 @@ const resendResetOTP = async (req, res) => {
     const resetTokenExpiry = new Date();
     resetTokenExpiry.setHours(resetTokenExpiry.getHours() + 1);
     
-    // Store token in user record and reset verification flag
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpiry = resetTokenExpiry;
-    user.resetOTPVerified = false;
-    
-    await user.save();
+    // Store token in user record and reset verification flag using updateOne
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetPasswordToken: resetToken,
+          resetPasswordExpiry: resetTokenExpiry,
+          resetOTPVerified: false
+        }
+      }
+    );
     
     // Send password reset email
     try {
@@ -610,12 +646,17 @@ const generateAdminOTP = async (req, res) => {
     const otpExpiry = new Date();
     otpExpiry.setMinutes(otpExpiry.getMinutes() + 5);
     
-    // Store token in user record
-    user.adminLoginOTP = otp;
-    user.adminOTPExpiry = otpExpiry;
-    user.adminOTPVerified = false;
-    
-    await user.save();
+    // Store token in user record using updateOne to avoid validation issues
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          adminLoginOTP: otp,
+          adminOTPExpiry: otpExpiry,
+          adminOTPVerified: false
+        }
+      }
+    );
     
     // Send admin OTP email
     try {
@@ -704,10 +745,16 @@ const verifyAdminOTP = async (req, res) => {
     
     // Check if OTP has expired
     if (new Date() > new Date(user.adminOTPExpiry)) {
-      // Clear expired OTP
-      user.adminLoginOTP = undefined;
-      user.adminOTPExpiry = undefined;
-      await user.save();
+      // Clear expired OTP using updateOne
+      await User.updateOne(
+        { _id: user._id },
+        {
+          $unset: {
+            adminLoginOTP: "",
+            adminOTPExpiry: ""
+          }
+        }
+      );
       
       return res.status(400).json({ 
         message: "Verification code has expired. Please request a new one.", 
@@ -720,14 +767,17 @@ const verifyAdminOTP = async (req, res) => {
       return res.status(400).json({ message: "Invalid verification code" });
     }
     
-    // OTP verified, mark as verified
-    user.adminOTPVerified = true;
-    
-    // Clear the OTP
-    user.adminLoginOTP = undefined;
-    user.adminOTPExpiry = undefined;
-    
-    await user.save();
+    // OTP verified, mark as verified and clear the OTP using updateOne
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: { adminOTPVerified: true },
+        $unset: {
+          adminLoginOTP: "",
+          adminOTPExpiry: ""
+        }
+      }
+    );
     
     // Clean up any existing sessions for this user (optional)
     await Session.deleteMany({ userId: user._id });
