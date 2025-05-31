@@ -15,6 +15,7 @@ const User = require("../models/user.model");
 const TmpExamStudentData = require('../models/tmp.model');
 const { mailSender, sendCertificateEmail } = require('../utils/mailSender'); // Add this import
 const mongoose = require('mongoose'); // Import mongoose
+const attendanceUtils = require('../utils/attendanceUtils'); // Import attendance utilities
 
 // Store user answers and randomized questions temporarily in memory
 const userExamData = {};
@@ -32,6 +33,13 @@ const shuffleArray = (array) => {
 // Helper function to get real attempt count and fix inconsistencies
 const getRealAttemptCount = async (examId, userId) => {
   try {
+    // Use our utility function to fix attempt numbers if needed
+    const fixedCount = await attendanceUtils.fixAttemptNumbers(userId, examId);
+    
+    if (fixedCount > 0) {
+      console.log(`Fixed ${fixedCount} attempt numbers for user ${userId}, exam ${examId}`);
+    }
+    
     // Get all completed or timed out attempts
     const completedAttempts = await ExamAttendance.find({
       examId, 
@@ -48,40 +56,6 @@ const getRealAttemptCount = async (examId, userId) => {
     
     // Calculate real attempt count (only count completed/timed out and one in-progress)
     const realCount = completedAttempts.length + (inProgressAttempts.length > 0 ? 1 : 0);
-    
-    // Check if database has inconsistent attempt numbers
-    if (completedAttempts.length > 0) {
-      // Check if attempt numbers are sequential starting from 1
-      let needsFixing = false;
-      for (let i = 0; i < completedAttempts.length; i++) {
-        if (completedAttempts[i].attemptNumber !== i + 1) {
-          needsFixing = true;
-          break;
-        }
-      }
-      
-      // Fix attempt numbers if needed
-      if (needsFixing) {
-        console.log(`Fixing inconsistent attempt numbers for user ${userId}, exam ${examId}`);
-        for (let i = 0; i < completedAttempts.length; i++) {
-          completedAttempts[i].attemptNumber = i + 1;
-          await completedAttempts[i].save();
-        }
-        
-        // Also update any in-progress attempt
-        if (inProgressAttempts.length > 0) {
-          inProgressAttempts[0].attemptNumber = completedAttempts.length + 1;
-          await inProgressAttempts[0].save();
-          
-          // Cancel any extra in-progress attempts
-          if (inProgressAttempts.length > 1) {
-            for (let i = 1; i < inProgressAttempts.length; i++) {
-              await ExamAttendance.findByIdAndDelete(inProgressAttempts[i]._id);
-            }
-          }
-        }
-      }
-    }
     
     return realCount;
   } catch (error) {
@@ -229,6 +203,12 @@ const attendExam = async (req, res) => {
           console.log("Cleanup failed but continuing:", cleanupError.message);
         }
         
+        // Use the already calculated nextAttemptNumber or get it from utility if needed
+        // We'll use the utility approach and override the previous value for consistency
+        console.log(`Using utility function to confirm attempt number (previously calculated as ${nextAttemptNumber})`);
+        const confirmedAttemptNumber = await attendanceUtils.getNextAttemptNumber(userId, examId);
+        console.log(`Confirmed attempt number: ${confirmedAttemptNumber} from utility function`);
+        
         // Create a new attempt with explicit attempt number
         attendance = new ExamAttendance({
           examId,
@@ -236,11 +216,11 @@ const attendExam = async (req, res) => {
           totalQuestions: exam.sections.mcqs.length,
           startTime: new Date(),
           status: "IN_PROGRESS",
-          attemptNumber: nextAttemptNumber
+          attemptNumber: confirmedAttemptNumber
         });
         
         await attendance.save();
-        console.log(`New attendance record created with ID: ${attendance._id} and attempt #${nextAttemptNumber}`);
+        console.log(`New attendance record created with ID: ${attendance._id} and attempt #${confirmedAttemptNumber}`);
         
         // Randomize questions and store in memory
         const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -254,7 +234,7 @@ const attendExam = async (req, res) => {
           randomizedQuestions,
           userAnswers: {},
           attemptId: attendance._id,
-          attemptNumber: nextAttemptNumber // Store attempt number in memory
+          attemptNumber: confirmedAttemptNumber // Store attempt number in memory
         };
         
         // Also store in the database for persistence
@@ -263,20 +243,20 @@ const attendExam = async (req, res) => {
           await TmpExamStudentData.deleteMany({ 
             userId, 
             examId, 
-            attemptNumber: nextAttemptNumber 
+            attemptNumber: confirmedAttemptNumber 
           });
           
           // Create new temporary data for this attempt
           const tmpData = new TmpExamStudentData({
             userId,
             examId,
-            attemptNumber: nextAttemptNumber,
+            attemptNumber: confirmedAttemptNumber,
             questionIds: randomizedQuestions.map(q => q._id),
             answers: []
           });
           
           await tmpData.save();
-          console.log(`Created temporary data storage for attempt #${nextAttemptNumber}`);
+          console.log(`Created temporary data storage for attempt #${confirmedAttemptNumber}`);
         } catch (tmpError) {
           console.error("Error saving temporary data:", tmpError);
           // Continue anyway, as we have the data in memory
@@ -315,6 +295,10 @@ const attendExam = async (req, res) => {
         console.log("No in-progress attempt found, creating a first attempt");
         
         try {
+          // Get the next attempt number using utility function
+          const attemptNumber = await attendanceUtils.getNextAttemptNumber(userId, examId);
+          console.log(`Creating first attempt with number: ${attemptNumber}`);
+          
           // Create first attempt
           attendance = new ExamAttendance({
             examId,
@@ -322,7 +306,7 @@ const attendExam = async (req, res) => {
             totalQuestions: exam.sections.mcqs.length,
             startTime: new Date(),
             status: "IN_PROGRESS",
-            attemptNumber: 1
+            attemptNumber: attemptNumber
           });
           
           await attendance.save();
@@ -862,27 +846,47 @@ const getExamStatus = async (req, res) => {
     const { examId } = req.params;
     const userId = req.user._id;
 
-    const attendance = await ExamAttendance.findOne({ examId, userId });
+    // Find the most recent attendance record for this user and exam
+    const attendance = await ExamAttendance.findOne({ 
+      examId, 
+      userId 
+    }).sort({ startTime: -1 });
+    
     if (!attendance) {
       return res.status(404).json({ message: "No exam session found" });
     }
 
-    // Get answer count from memory if available
-    let answeredCount = 0;
-    if (userExamData[userId] && userExamData[userId][examId]) {
-      answeredCount = Object.keys(userExamData[userId][examId].userAnswers).length;
-    }
-
-    res.status(200).json({
-      status: attendance.status,
-      score: attendance.status === "IN_PROGRESS" ? null : attendance.score,
-      totalQuestions: attendance.totalQuestions,
-      attemptedQuestions: attendance.status === "IN_PROGRESS" ? answeredCount : attendance.attemptedQuestions,
-      startTime: attendance.startTime,
-      endTime: attendance.endTime
+    // Clean up any stale attendances for this user automatically
+    await attendanceUtils.cleanupStaleAttendances();
+    
+    // Get detailed status using utility function
+    const statusInfo = attendanceUtils.getDetailedStatus(attendance, userExamData);
+    
+    // Get total attempts information
+    const completedAttempts = await ExamAttendance.countDocuments({
+      examId,
+      userId,
+      status: { $in: ["COMPLETED", "TIMED_OUT"] }
     });
+    
+    const inProgressAttempts = await ExamAttendance.countDocuments({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+    
+    // Add attempts information to the response
+    statusInfo.totalAttempts = completedAttempts + inProgressAttempts;
+    statusInfo.completedAttempts = completedAttempts;
+    statusInfo.remainingAttempts = Math.max(0, 5 - completedAttempts); // Using MAX_ATTEMPTS = 5
+    
+    // For debugging purposes, log the actual status from the database
+    console.log(`Exam status for user ${userId}, exam ${examId}: ${statusInfo.status}, attempts: ${statusInfo.totalAttempts}`);
+
+    res.status(200).json(statusInfo);
 
   } catch (error) {
+    console.error("Error in getExamStatus:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message 
@@ -1264,9 +1268,21 @@ const getUserExams = async (req, res) => {
         passedExams,
         passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%',
         hiddenExams: Object.values(examMap).filter(exam => exam.shouldHide).length,
-        showAll: showAll === 'true'
+        showAll: showAll === 'true',
+        maxAttemptsAllowed: MAX_ATTEMPTS
       },
-      exams: filteredExams
+      exams: filteredExams.map(exam => ({
+        ...exam,
+        attemptsInfo: {
+          total: exam.attempts.length,
+          completed: exam.completedAttempts,
+          inProgress: exam.attempts.filter(a => a.status === 'IN_PROGRESS').length,
+          remaining: exam.remainingAttempts,
+          canAttempt: exam.canAttempt,
+          maxAttemptsReached: exam.completedAttempts >= MAX_ATTEMPTS,
+          maxAttempts: MAX_ATTEMPTS
+        }
+      }))
     });
     
   } catch (error) {

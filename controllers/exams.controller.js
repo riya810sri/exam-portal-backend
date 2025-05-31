@@ -1,6 +1,7 @@
 const Exam = require("../models/exam.model");
 const ExamAttendance = require("../models/examAttendance.model");
 const ExamHistory = require("../models/examHistory.model");
+const attendanceUtils = require('../utils/attendanceUtils'); // Import attendance utilities
 
 const createExam = async (req, res) => {
   try {
@@ -124,7 +125,9 @@ const getAllExams = async (req, res) => {
       let bestPercentage = 0;
       
       attempts.forEach(attempt => {
-        if (attempt.status === "IN_PROGRESS") {
+        // Use the attendance utility function to check status properly
+        const statusInfo = attendanceUtils.getDetailedStatus(attempt);
+        if (statusInfo.inProgress) {
           inProgress = true;
         }
         
@@ -678,18 +681,27 @@ const attendExam = async (req, res) => {
     }
 
     // Check if user has already started the exam
-    let attendance = await ExamAttendance.findOne({ examId, userId });
+    let attendance = await ExamAttendance.findOne({ 
+      examId, 
+      userId,
+      status: "IN_PROGRESS"
+    });
 
     if (!attendance) {
-      // Create new attendance record
+      // Create new attendance record with proper attempt number
       const mcqCount = exam.sections?.mcqs?.length || 0;
       const shortAnswerCount = exam.sections?.shortAnswers?.length || 0;
+      const nextAttemptNumber = await attendanceUtils.getNextAttemptNumber(userId, examId);
+      
+      console.log(`Creating new attendance with attempt number: ${nextAttemptNumber}`);
+      
       attendance = new ExamAttendance({
         examId,
         userId,
         totalQuestions: mcqCount + shortAnswerCount,
         startTime: new Date(),
-        status: "IN_PROGRESS"
+        status: "IN_PROGRESS",
+        attemptNumber: nextAttemptNumber
       });
       await attendance.save();
     }

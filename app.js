@@ -5,6 +5,7 @@ const config = require("./config/config");
 require("dotenv").config();
 const { transporter } = require("./utils/emailUtils");
 const net = require('net'); // Added for port checking
+const attendanceUtils = require('./utils/attendanceUtils'); // Import attendance utilities
 
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/users.routes");
@@ -46,6 +47,19 @@ app.use('/api/exam-attendance', examAttendanceRoutes);
 app.get("/live", (req, res) => {
   res.status(200).json({ message: "Server is live" });
 });
+
+// Periodically clean up stale exam attendances (every 30 minutes)
+setInterval(async () => {
+  try {
+    console.log("Running scheduled cleanup of stale exam attendances...");
+    const updatedCount = await attendanceUtils.cleanupStaleAttendances();
+    if (updatedCount > 0) {
+      console.log(`Cleaned up ${updatedCount} stale exam attendances`);
+    }
+  } catch (error) {
+    console.error("Error during scheduled attendance cleanup:", error);
+  }
+}, 30 * 60 * 1000); // 30 minutes
 
 // Function to check if a port is in use
 function isPortInUse(port) {
