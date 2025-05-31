@@ -16,6 +16,7 @@ const TmpExamStudentData = require('../models/tmp.model');
 const { mailSender, sendCertificateEmail } = require('../utils/mailSender'); // Add this import
 const mongoose = require('mongoose'); // Import mongoose
 const attendanceUtils = require('../utils/attendanceUtils'); // Import attendance utilities
+const { processAntiAbuseData } = require('../middlewares/antiAbuse.middleware'); // Add anti-abuse detection
 
 // Store user answers and randomized questions temporarily in memory
 const userExamData = {};
@@ -221,6 +222,22 @@ const attendExam = async (req, res) => {
         
         await attendance.save();
         console.log(`New attendance record created with ID: ${attendance._id} and attempt #${confirmedAttemptNumber}`);
+        
+        // Process anti-abuse data and initialize session fingerprinting
+        try {
+          const riskAssessment = await processAntiAbuseData(req, examId, userId);
+          if (riskAssessment) {
+            console.log(`Anti-abuse assessment completed with risk score: ${riskAssessment.overallRiskScore}`);
+            
+            // Log high-risk sessions for monitoring
+            if (riskAssessment.overallRiskScore > 60) {
+              console.warn(`HIGH RISK SESSION: User ${userId}, Exam ${examId}, Risk: ${riskAssessment.overallRiskScore}%`);
+            }
+          }
+        } catch (antiAbuseError) {
+          console.error('Anti-abuse processing failed:', antiAbuseError);
+          // Don't block exam start if anti-abuse fails
+        }
         
         // Randomize questions and store in memory
         const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -544,6 +561,144 @@ const submitAnswer = async (req, res) => {
     
     const attemptNumber = attendance.attemptNumber || 1;
     console.log(`Saving answer for attempt #${attemptNumber}`);
+
+    // Anti-abuse: Comprehensive analysis and real-time monitoring
+    try {
+      const cheatDetection = require('../utils/cheatDetection');
+      const { patternDetector } = require('../utils/serverPatternDetection');
+      const { securityMonitor } = require('../utils/securityMonitor');
+      
+      // Extract timing and behavioral metadata from request
+      const metaData = {
+        timeTaken: req.body.timeTaken || 0,
+        mouseData: req.body.mouseData || {},
+        keyboardData: req.body.keyboardData || {},
+        timestamp: Date.now()
+      };
+
+      // 1. Analyze request headers for proxy tool indicators
+      const headerAnalysis = cheatDetection.analyzeRequestHeaders(req.headers);
+      if (headerAnalysis.isSuspicious && headerAnalysis.anomalyScore > 0.7) {
+        const violation = {
+          evidenceType: 'PROXY_TOOL_DETECTED',
+          confidence: headerAnalysis.anomalyScore,
+          details: {
+            source: 'header_analysis',
+            anomalyScore: headerAnalysis.anomalyScore,
+            anomalies: headerAnalysis.anomalies,
+            timestamp: new Date(),
+            endpoint: 'submitAnswer'
+          }
+        };
+        
+        await cheatDetection.reportServerDetectedCheating(userId, examId, violation.evidenceType, violation.details);
+        await securityMonitor.monitorSession(userId, examId, violation);
+      }
+
+      // 2. Analyze request timing patterns
+      const patternAnalysis = await cheatDetection.analyzeRequestPattern(userId, examId);
+      if (patternAnalysis.isSuspicious && patternAnalysis.anomalyScore > 0.6) {
+        const violation = {
+          evidenceType: 'AUTOMATED_BEHAVIOR',
+          confidence: patternAnalysis.anomalyScore,
+          details: {
+            source: 'pattern_analysis',
+            anomalyScore: patternAnalysis.anomalyScore,
+            anomalies: patternAnalysis.anomalies,
+            stats: patternAnalysis.stats,
+            timestamp: new Date(),
+            endpoint: 'submitAnswer'
+          }
+        };
+        
+        await cheatDetection.reportServerDetectedCheating(userId, examId, violation.evidenceType, violation.details);
+        await securityMonitor.monitorSession(userId, examId, violation);
+      }
+
+      // 3. Advanced behavioral pattern analysis
+      const behaviorAnalysis = await patternDetector.analyzeAnswerPattern(
+        userId, 
+        examId, 
+        questionId, 
+        selectedAnswer, 
+        metaData
+      );
+      
+      if (behaviorAnalysis.isSuspicious) {
+        const violation = {
+          evidenceType: 'AUTOMATED_BEHAVIOR',
+          confidence: behaviorAnalysis.riskScore / 100,
+          details: {
+            source: 'behavioral_analysis',
+            riskScore: behaviorAnalysis.riskScore,
+            patterns: behaviorAnalysis.patterns,
+            suspiciousPatterns: behaviorAnalysis.suspiciousPatterns,
+            timestamp: new Date(),
+            endpoint: 'submitAnswer'
+          }
+        };
+        
+        await cheatDetection.reportServerDetectedCheating(userId, examId, violation.evidenceType, violation.details);
+        await securityMonitor.monitorSession(userId, examId, violation);
+      }
+
+      // 4. Update request log for continuous monitoring
+      if (attendance.requestLog) {
+        attendance.requestLog.push({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          userAgent: req.headers['user-agent'],
+          referer: req.headers.referer,
+          ip: req.ip || req.connection.remoteAddress,
+          questionId: questionId,
+          timeTaken: metaData.timeTaken
+        });
+        
+        // Keep only last 100 requests to prevent memory bloat
+        if (attendance.requestLog.length > 100) {
+          attendance.requestLog = attendance.requestLog.slice(-100);
+        }
+      } else {
+        attendance.requestLog = [{
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          userAgent: req.headers['user-agent'],
+          referer: req.headers.referer,
+          ip: req.ip || req.connection.remoteAddress,
+          questionId: questionId,
+          timeTaken: metaData.timeTaken
+        }];
+      }
+
+      // 5. Update behavioral metrics in attendance record
+      if (!attendance.behaviorProfile) {
+        attendance.behaviorProfile = {
+          averageResponseTime: 0,
+          responseTimeVariance: 0,
+          totalResponses: 0,
+          suspiciousPatternCount: 0
+        };
+      }
+
+      // Update response time statistics
+      const profile = attendance.behaviorProfile;
+      profile.totalResponses++;
+      
+      if (metaData.timeTaken > 0) {
+        const newAverage = ((profile.averageResponseTime * (profile.totalResponses - 1)) + metaData.timeTaken) / profile.totalResponses;
+        profile.averageResponseTime = newAverage;
+      }
+
+      if (behaviorAnalysis.isSuspicious) {
+        profile.suspiciousPatternCount++;
+      }
+
+    } catch (antiAbuseError) {
+      console.error('Anti-abuse processing failed in submitAnswer:', antiAbuseError);
+      // Don't block legitimate users if anti-abuse system fails
+    }
 
     // Initialize user exam data if it doesn't exist
     if (!userExamData[userId]) {
@@ -1311,7 +1466,7 @@ const myExamHistory = async (req, res) => {
     const examAttendances = await ExamAttendance.find({ userId })
       .populate({
         path: 'examId',
-        select: 'title description duration status publishedAt',
+        select: 'title description duration status'
       })
       .sort({ startTime: -1 });
     
@@ -2000,6 +2155,187 @@ const adminGetAllUserHistory = async (req, res) => {
   }
 };
 
+// Report cheating incident
+const reportCheating = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const userId = req.user._id;
+    const { evidenceType, details = {}, source = "CLIENT" } = req.body;
+
+    // Validate required fields
+    if (!evidenceType) {
+      return res.status(400).json({ 
+        message: "Evidence type is required" 
+      });
+    }
+
+    // Find the in-progress attendance record
+    const attendance = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+
+    if (!attendance) {
+      return res.status(404).json({ 
+        message: "No active exam found to report cheating" 
+      });
+    }
+
+    // Add new evidence to the attendance record
+    const newEvidence = {
+      timestamp: new Date(),
+      evidenceType,
+      details,
+      source
+    };
+
+    // Update the attendance record
+    attendance.cheatEvidence.push(newEvidence);
+    attendance.cheatDetected = true;
+    attendance.flaggedForReview = true;
+    
+    await attendance.save();
+    
+    console.log(`Cheating incident reported for user ${userId}, exam ${examId}, type: ${evidenceType}`);
+
+    res.status(200).json({
+      message: "Cheating incident reported successfully",
+      evidenceId: attendance.cheatEvidence[attendance.cheatEvidence.length - 1]._id
+    });
+
+  } catch (error) {
+    console.error("Error in reportCheating:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message
+    });
+  }
+};
+
+// Get cheating reports for an exam (admin only)
+const getCheatingReports = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    
+    // Find all attendance records with cheating detected
+    const attendances = await ExamAttendance.find({
+      examId,
+      cheatDetected: true
+    }).populate('userId', 'username firstName lastName email');
+    
+    if (!attendances || attendances.length === 0) {
+      return res.status(200).json({
+        message: "No cheating incidents found for this exam",
+        reports: []
+      });
+    }
+    
+    // Format the cheating reports
+    const reports = attendances.map(attendance => {
+      return {
+        attendanceId: attendance._id,
+        user: {
+          userId: attendance.userId._id,
+          username: attendance.userId.username,
+          name: attendance.userId.firstName && attendance.userId.lastName ? 
+                `${attendance.userId.firstName} ${attendance.userId.lastName}` : 
+                attendance.userId.username,
+          email: attendance.userId.email
+        },
+        attemptNumber: attendance.attemptNumber,
+        startTime: attendance.startTime,
+        endTime: attendance.endTime,
+        status: attendance.status,
+        flaggedForReview: attendance.flaggedForReview,
+        evidenceCount: attendance.cheatEvidence.length,
+        evidence: attendance.cheatEvidence.map(e => ({
+          id: e._id,
+          timestamp: e.timestamp,
+          evidenceType: e.evidenceType,
+          details: e.details,
+          source: e.source
+        }))
+      };
+    });
+    
+    res.status(200).json({
+      message: "Cheating reports retrieved successfully",
+      count: reports.length,
+      reports
+    });
+    
+  } catch (error) {
+    console.error("Error in getCheatingReports:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message
+    });
+  }
+};
+
+// Start monitoring for cheating detection
+const startMonitoring = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const userId = req.user._id;
+    
+    // Find the in-progress attendance record
+    const attendance = await ExamAttendance.findOne({
+      examId,
+      userId,
+      status: "IN_PROGRESS"
+    });
+
+    if (!attendance) {
+      return res.status(404).json({ 
+        message: "No active exam found to monitor",
+        success: false
+      });
+    }
+    
+    // Initialize monitoring data if not exists
+    if (!attendance.riskAssessment) {
+      attendance.riskAssessment = {
+        overallRiskScore: 0,
+        riskFactors: [],
+        lastUpdated: new Date(),
+        violationCount: 0,
+        confidence: 0
+      };
+    }
+    
+    // Check if user has already been flagged for suspicious activity
+    const isHighRisk = attendance.riskAssessment.overallRiskScore > 70;
+    
+    // Update the attendance record with monitoring enabled
+    attendance.monitoringActive = true;
+    attendance.monitoringStartTime = new Date();
+    await attendance.save();
+    
+    // Return appropriate risk level
+    const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
+    
+    console.log(`Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
+    
+    res.status(200).json({
+      message: "Monitoring started successfully",
+      success: true,
+      monitoringId: attendance._id,
+      riskLevel,
+      status: 'MONITORING_ACTIVE'
+    });
+    
+  } catch (error) {
+    console.error("Error in startMonitoring:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      success: false
+    });
+  }
+};
+
 module.exports = {
   attendExam,
   submitAnswer,
@@ -2011,5 +2347,8 @@ module.exports = {
   myExamHistory,
   cancelInProgressAttempt,
   cancelAllAttempts,
-  adminGetAllUserHistory
+  adminGetAllUserHistory,
+  reportCheating,
+  getCheatingReports,
+  startMonitoring
 };

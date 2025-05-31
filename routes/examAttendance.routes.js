@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { authenticateUser } = require("../middlewares/auth.middleware");
+const { collectAntiAbuseData, validateJSChallenge } = require("../middlewares/antiAbuse.middleware");
 const {
   attendExam,
   submitAnswer,
@@ -12,7 +13,10 @@ const {
   myExamHistory,
   cancelInProgressAttempt,
   cancelAllAttempts,
-  adminGetAllUserHistory
+  adminGetAllUserHistory,
+  reportCheating,
+  getCheatingReports,
+  startMonitoring
 } = require("../controllers/examAttendance.controller");
 const { downloadCertificate } = require("../controllers/certificate.controller");
 
@@ -57,10 +61,10 @@ router.get("/my-exams/:status", authenticateUser, (req, res) => {
 });
 
 // Normal users can attend, submit answers, and complete exams
-router.get("/:examId/attend", authenticateUser, attendExam);
+router.get("/:examId/attend", authenticateUser, collectAntiAbuseData, attendExam);
 
 // Explicit route for creating a new attempt
-router.get("/:examId/new-attempt", authenticateUser, (req, res) => {
+router.get("/:examId/new-attempt", authenticateUser, collectAntiAbuseData, (req, res) => {
   // Ensure newAttempt is explicitly set to true
   req.query.newAttempt = 'true';
   attendExam(req, res);
@@ -72,7 +76,7 @@ router.post("/:examId/cancel-in-progress", authenticateUser, cancelInProgressAtt
 // Route for canceling all attempts for an exam
 router.post("/:examId/cancel-all-attempts", authenticateUser, cancelAllAttempts);
   
-router.post("/:examId/submit-answer", authenticateUser, 
+router.post("/:examId/submit-answer", authenticateUser, collectAntiAbuseData, validateJSChallenge,
   submitAnswer ? submitAnswer : fallback("submitAnswer"));
   
 router.post("/:examId/complete", authenticateUser, 
@@ -94,5 +98,18 @@ router.get("/:examId/certificate", authenticateUser,
 
 // Admin routes
 router.get("/admin/history", authenticateUser, isAdmin, adminGetAllUserHistory);
+
+// Cheating detection routes
+// Client-side reporting of cheating incidents
+router.post("/:examId/report-cheating", authenticateUser, 
+  reportCheating ? reportCheating : fallback("reportCheating"));
+
+// Start monitoring for cheating detection
+router.post("/:examId/start-monitoring", authenticateUser, collectAntiAbuseData,
+  startMonitoring ? startMonitoring : fallback("startMonitoring"));
+
+// Admin-only route to get all cheating reports for an exam
+router.get("/admin/:examId/cheating-reports", authenticateUser, isAdmin, 
+  getCheatingReports ? getCheatingReports : fallback("getCheatingReports"));
 
 module.exports = router;

@@ -15,6 +15,7 @@ const questionRoutes = require("./routes/questions.routes");
 const roleRoutes = require("./routes/role.routes");
 const certificateRoutes = require("./routes/certificate.routes");
 const examAttendanceRoutes = require("./routes/examAttendance.routes");
+const adminAntiAbuseRoutes = require("./routes/admin.antiAbuse.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3456;
@@ -42,6 +43,7 @@ app.use("/api/questions", questionRoutes);
 app.use("/api/roles", roleRoutes);
 app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
+app.use('/api/admin/security', adminAntiAbuseRoutes);
 
 // Connect to Database
 app.get("/live", (req, res) => {
