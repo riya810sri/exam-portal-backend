@@ -20,7 +20,7 @@ const examAttendanceSchema = new mongoose.Schema({
   },
   totalQuestions: {
     type: Number,
-    required: true,
+    default: 0
   },
   attemptedQuestions: {
     type: Number,
@@ -32,7 +32,7 @@ const examAttendanceSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["IN_PROGRESS", "COMPLETED", "TIMED_OUT", "SUSPENDED"],
+    enum: ["IN_PROGRESS", "COMPLETED", "TIMED_OUT", "SUSPENDED", "SUSPICIOUS_ACTIVITY"],
     default: "IN_PROGRESS",
   },
   // Anti-abuse and monitoring fields

@@ -2195,8 +2195,14 @@ const reportCheating = async (req, res) => {
         status: "SUSPICIOUS_ACTIVITY",
         startTime: new Date(),
         flaggedForReview: true,
-        cheatDetected: true
+        cheatDetected: true,
+        cheatEvidence: [] // Initialize an empty array
       });
+    }
+
+    // Initialize cheatEvidence array if it doesn't exist
+    if (!attendance.cheatEvidence) {
+      attendance.cheatEvidence = [];
     }
 
     // Add new evidence to the attendance record
