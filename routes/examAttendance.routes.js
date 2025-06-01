@@ -62,7 +62,18 @@ router.get("/my-exams/:status", authenticateUser, (req, res) => {
 });
 
 // Normal users can attend, submit answers, and complete exams
-router.get("/:examId/attend", blockPostman, authenticateUser, collectAntiAbuseData, attendExam);
+router.get("/:examId/attend", blockPostman, authenticateUser, collectAntiAbuseData, (req, res, next) => {
+  // Add debug logging for exam attendance attempts
+  console.log('DEBUG [ExamAttend]:', {
+    timestamp: new Date().toISOString(),
+    userId: req.user._id,
+    examId: req.params.examId,
+    userAgent: req.headers['user-agent'],
+    ip: req.ip,
+    antiAbuseData: req.antiAbuseData || 'Not collected'
+  });
+  next();
+}, attendExam);
 
 // Explicit route for creating a new attempt
 router.get("/:examId/new-attempt", blockPostman, authenticateUser, collectAntiAbuseData, (req, res) => {

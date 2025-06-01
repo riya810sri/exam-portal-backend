@@ -35,7 +35,59 @@ class ExamSecurityMonitor extends EventEmitter {
     // Setup event listeners
     this.setupEventListeners();
     
-    console.log('Exam Security Monitor initialized');
+    console.log('Exam Security Monitor initialized with WebSocket support');
+  }
+
+  /**
+   * Get Socket.IO instance for real-time communication
+   */
+  getSocketIO() {
+    return global.io;
+  }
+
+  /**
+   * Broadcast to admin dashboard
+   */
+  broadcastToAdmins(eventType, data) {
+    const io = this.getSocketIO();
+    if (io) {
+      io.to('admin-dashboard').emit(eventType, {
+        timestamp: new Date().toISOString(),
+        type: eventType,
+        data
+      });
+      console.log(`📡 [WebSocket] Broadcasted to admins: ${eventType}`);
+    }
+  }
+
+  /**
+   * Send to specific user
+   */
+  sendToUser(userId, eventType, data) {
+    const io = this.getSocketIO();
+    if (io) {
+      io.to(`user-${userId}`).emit(eventType, {
+        timestamp: new Date().toISOString(),
+        type: eventType,
+        data
+      });
+      console.log(`📡 [WebSocket] Sent to user ${userId}: ${eventType}`);
+    }
+  }
+
+  /**
+   * Send to specific exam session
+   */
+  sendToExamSession(examId, eventType, data) {
+    const io = this.getSocketIO();
+    if (io) {
+      io.to(`exam-${examId}`).emit(eventType, {
+        timestamp: new Date().toISOString(),
+        type: eventType,
+        data
+      });
+      console.log(`📡 [WebSocket] Sent to exam ${examId}: ${eventType}`);
+    }
   }
 
   /**
@@ -58,6 +110,14 @@ class ExamSecurityMonitor extends EventEmitter {
     try {
       const sessionKey = `${userId}-${examId}`;
       
+      // Debug log: Start monitoring
+      console.log('DEBUG [SecurityMonitor] Start:', {
+        timestamp: new Date().toISOString(),
+        sessionKey,
+        violationType: violation.evidenceType,
+        details: violation.details
+      });
+      
       // Get current exam attendance
       const attendance = await ExamAttendance.findOne({
         userId,
@@ -70,11 +130,25 @@ class ExamSecurityMonitor extends EventEmitter {
         return;
       }
 
+      // Debug log: Before risk assessment
+      console.log('DEBUG [SecurityMonitor] Pre-Assessment:', {
+        currentRiskScore: attendance.riskAssessment?.overallRiskScore || 0,
+        violationCount: attendance.riskAssessment?.violationCount || 0
+      });
+
       // Update risk assessment
       await this.updateRiskAssessment(attendance, violation);
       
       // Calculate current risk level
       const riskLevel = this.calculateRiskLevel(attendance);
+
+      // Debug log: After risk assessment
+      console.log('DEBUG [SecurityMonitor] Post-Assessment:', {
+        newRiskScore: riskLevel.score,
+        riskLevel: riskLevel.level,
+        actionRequired: riskLevel.actionRequired,
+        confidence: riskLevel.confidence
+      });
       
       // Emit appropriate events based on risk level
       if (riskLevel.score >= this.config.autoSuspendThreshold) {
@@ -90,8 +164,22 @@ class ExamSecurityMonitor extends EventEmitter {
       // Update statistics
       this.updateStats(violation.evidenceType);
 
+      // Debug log: Monitoring complete
+      console.log('DEBUG [SecurityMonitor] Complete:', {
+        timestamp: new Date().toISOString(),
+        sessionKey,
+        finalRiskScore: riskLevel.score,
+        status: attendance.status
+      });
+
     } catch (error) {
-      console.error('Error in session monitoring:', error);
+      console.error('DEBUG [SecurityMonitor] Error:', {
+        error: error.message,
+        stack: error.stack,
+        userId,
+        examId,
+        violationType: violation.evidenceType
+      });
     }
   }
 
@@ -102,6 +190,13 @@ class ExamSecurityMonitor extends EventEmitter {
    */
   async updateRiskAssessment(attendance, violation) {
     try {
+      // Debug log: Start risk assessment
+      console.log('DEBUG [RiskAssessment] Start:', {
+        attendanceId: attendance._id,
+        currentRiskScore: attendance.riskAssessment?.overallRiskScore || 0,
+        violationType: violation.evidenceType
+      });
+
       // Initialize risk assessment if not exists
       if (!attendance.riskAssessment) {
         attendance.riskAssessment = {
@@ -111,6 +206,8 @@ class ExamSecurityMonitor extends EventEmitter {
           violationCount: 0,
           confidence: 0
         };
+        // Debug log: Initialize risk assessment
+        console.log('DEBUG [RiskAssessment] Initialized new assessment');
       }
 
       // Add new risk factor
@@ -122,14 +219,31 @@ class ExamSecurityMonitor extends EventEmitter {
         details: violation.details || {}
       };
 
+      // Debug log: New risk factor
+      console.log('DEBUG [RiskAssessment] New Factor:', {
+        type: riskFactor.type,
+        severity: riskFactor.severity,
+        confidence: riskFactor.confidence
+      });
+
       attendance.riskAssessment.riskFactors.push(riskFactor);
       attendance.riskAssessment.violationCount++;
       attendance.riskAssessment.lastUpdated = new Date();
 
-      // Recalculate overall risk score
-      attendance.riskAssessment.overallRiskScore = this.calculateOverallRiskScore(
+      // Calculate the new risk score
+      const newScore = this.calculateOverallRiskScore(
         attendance.riskAssessment.riskFactors
       );
+
+      // Debug log: Score calculation
+      console.log('DEBUG [RiskAssessment] Score Update:', {
+        oldScore: attendance.riskAssessment.overallRiskScore,
+        newScore,
+        change: newScore - attendance.riskAssessment.overallRiskScore,
+        totalViolations: attendance.riskAssessment.violationCount
+      });
+
+      attendance.riskAssessment.overallRiskScore = newScore;
 
       // Update confidence based on number of violations
       attendance.riskAssessment.confidence = Math.min(
@@ -139,8 +253,21 @@ class ExamSecurityMonitor extends EventEmitter {
 
       await attendance.save();
 
+      // Debug log: Assessment complete
+      console.log('DEBUG [RiskAssessment] Complete:', {
+        attendanceId: attendance._id,
+        finalRiskScore: attendance.riskAssessment.overallRiskScore,
+        confidence: attendance.riskAssessment.confidence,
+        lastUpdated: attendance.riskAssessment.lastUpdated
+      });
+
     } catch (error) {
-      console.error('Error updating risk assessment:', error);
+      console.error('DEBUG [RiskAssessment] Error:', {
+        error: error.message,
+        stack: error.stack,
+        attendanceId: attendance._id,
+        violationType: violation.evidenceType
+      });
     }
   }
 
@@ -248,6 +375,20 @@ class ExamSecurityMonitor extends EventEmitter {
     console.log(`SUSPICIOUS ACTIVITY: User ${userId}, Exam ${examId}, Risk: ${riskLevel.score}%`);
     console.log(`Type: ${violation.evidenceType}, Details: ${JSON.stringify(violation.details)}`);
     
+    // WebSocket: Broadcast to admins
+    this.broadcastToAdmins('suspicious_activity', {
+      userId,
+      examId,
+      violation: {
+        type: violation.evidenceType,
+        details: violation.details
+      },
+      riskLevel: {
+        score: riskLevel.score,
+        level: riskLevel.level
+      }
+    });
+    
     // Log to database for analysis
     await this.logSecurityEvent('suspicious_activity', eventData);
   }
@@ -260,6 +401,29 @@ class ExamSecurityMonitor extends EventEmitter {
     const { userId, examId, violation, riskLevel } = eventData;
     
     console.warn(`HIGH RISK SESSION: User ${userId}, Exam ${examId}, Risk: ${riskLevel.score}%`);
+    
+    // WebSocket: Broadcast to admins with high priority
+    this.broadcastToAdmins('high_risk_session', {
+      userId,
+      examId,
+      violation: {
+        type: violation.evidenceType,
+        details: violation.details
+      },
+      riskLevel: {
+        score: riskLevel.score,
+        level: riskLevel.level,
+        actionRequired: riskLevel.actionRequired
+      },
+      priority: 'HIGH'
+    });
+    
+    // WebSocket: Notify the specific user about increased monitoring
+    this.sendToUser(userId, 'monitoring_increased', {
+      examId,
+      message: 'Your session is being monitored for security purposes',
+      riskLevel: 'MEDIUM'
+    });
     
     // Send alert to administrators
     await this.sendAdminAlert('high_risk', eventData);
@@ -281,6 +445,31 @@ class ExamSecurityMonitor extends EventEmitter {
     const { userId, examId, violation, riskLevel } = eventData;
     
     console.error(`CRITICAL THREAT: User ${userId}, Exam ${examId}, Risk: ${riskLevel.score}%`);
+    
+    // WebSocket: Immediate broadcast to all admins with CRITICAL priority
+    this.broadcastToAdmins('critical_threat', {
+      userId,
+      examId,
+      violation: {
+        type: violation.evidenceType,
+        details: violation.details
+      },
+      riskLevel: {
+        score: riskLevel.score,
+        level: riskLevel.level,
+        actionRequired: riskLevel.actionRequired
+      },
+      priority: 'CRITICAL',
+      urgent: true
+    });
+    
+    // WebSocket: Send warning to user
+    this.sendToUser(userId, 'security_warning', {
+      examId,
+      message: 'Critical security violation detected. Your session may be suspended.',
+      riskLevel: 'HIGH',
+      actionRequired: true
+    });
     
     // Immediate admin notification
     await this.sendUrgentAlert('critical_threat', eventData);
@@ -309,6 +498,32 @@ class ExamSecurityMonitor extends EventEmitter {
       attendance.flaggedForReview = true;
       
       await attendance.save();
+      
+      // WebSocket: Immediate notification to admins
+      this.broadcastToAdmins('session_suspended', {
+        userId,
+        examId,
+        attendanceId: attendance._id,
+        riskScore: riskLevel.score,
+        suspensionReason: attendance.suspensionReason,
+        automatic: true,
+        priority: 'URGENT'
+      });
+      
+      // WebSocket: Notify user of suspension
+      this.sendToUser(userId, 'session_suspended', {
+        examId,
+        message: 'Your exam session has been automatically suspended due to security violations.',
+        reason: 'Multiple security violations detected',
+        contactSupport: true
+      });
+      
+      // WebSocket: Broadcast to exam session (for any other connected clients)
+      this.sendToExamSession(examId, 'session_ended', {
+        userId,
+        reason: 'Security violation - automatic suspension',
+        endTime: attendance.endTime
+      });
       
       // Send immediate alerts
       await this.sendUrgentAlert('auto_suspend', eventData);

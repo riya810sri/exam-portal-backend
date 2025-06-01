@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors"); // Make sure this is installed
+const http = require('http');
+const socketIo = require('socket.io');
 const db = require('./config/db'); // Ensure this is the correct path to your db.js file
 const config = require("./config/config");
 require("dotenv").config();
@@ -18,6 +20,20 @@ const examAttendanceRoutes = require("./routes/examAttendance.routes");
 const adminAntiAbuseRoutes = require("./routes/admin.antiAbuse.routes");
 
 const app = express();
+const server = http.createServer(app);
+
+// Initialize Socket.IO with CORS configuration
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.WS_CORS_ORIGIN || ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
+
+// Make Socket.IO instance available globally
+global.io = io;
+
 const PORT = process.env.PORT || 3456;
 
 // CORS configuration using settings from config.js
@@ -29,8 +45,21 @@ app.use(cors({
   maxAge: 86400 // Cache preflight requests for 24 hours
 }));
 
+// Additional CORS headers for WebSocket support
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -44,6 +73,53 @@ app.use("/api/roles", roleRoutes);
 app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
 app.use('/api/admin/security', adminAntiAbuseRoutes);
+
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log(`🔌 New WebSocket connection: ${socket.id}`);
+  
+  // Handle authentication
+  socket.on('authenticate', (data) => {
+    try {
+      const { token, userId, examId, isAdmin } = data;
+      
+      // Store user info in socket (you might want to verify the token here)
+      socket.userId = userId;
+      socket.examId = examId;
+      socket.isAdmin = isAdmin;
+      
+      // Join appropriate rooms
+      if (isAdmin) {
+        socket.join('admin-dashboard');
+        console.log(`👨‍💼 Admin ${userId} joined admin dashboard`);
+      } else {
+        socket.join(`exam-${examId}`);
+        socket.join(`user-${userId}`);
+        console.log(`👨‍🎓 User ${userId} joined exam ${examId}`);
+      }
+      
+      socket.emit('authenticated', { 
+        success: true, 
+        message: 'Successfully authenticated',
+        socketId: socket.id 
+      });
+      
+    } catch (error) {
+      console.error('WebSocket authentication error:', error);
+      socket.emit('auth-error', { message: 'Authentication failed' });
+    }
+  });
+  
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log(`🔌 WebSocket disconnected: ${socket.id}`);
+  });
+  
+  // Handle ping for connection testing
+  socket.on('ping', () => {
+    socket.emit('pong');
+  });
+});
 
 // Connect to Database
 app.get("/live", (req, res) => {
@@ -90,8 +166,9 @@ async function startServer() {
     
     if (!portInUse) {
       // Port is free, start the server
-      app.listen(currentPort, () => {
+      server.listen(currentPort, () => {
         console.log(`🚀 Server running on http://localhost:${currentPort}`);
+        console.log(`🔌 WebSocket server running on ws://localhost:${currentPort}`);
         console.log(`💻 Host: localhost, Port: ${currentPort}`);
         
         // Log CORS configuration

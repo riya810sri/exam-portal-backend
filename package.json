@@ -36,6 +36,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
     "nodemailer": "^6.10.0",
-    "pdfkit": "^0.17.0"
+    "pdfkit": "^0.17.0",
+    "socket.io": "^4.8.1",
+    "ws": "^8.18.2"
   }
 }
