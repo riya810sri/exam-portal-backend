@@ -2,12 +2,18 @@ const Session = require("../models/session.model");
 const User = require("../models/user.model");
 
 const authenticateUser = async (req, res, next) => {
-  const sessionId = req.header("Authorization"); // Session ID from headers
+  const authHeader = req.header("Authorization"); // Auth header from headers
 
-  if (!sessionId) {
+  if (!authHeader) {
     return res
       .status(401)
-      .json({ message: "Unauthorized: No session ID provided" });
+      .json({ message: "Unauthorized: No authorization header provided" });
+  }
+
+  // Extract session ID from Bearer token format if present
+  let sessionId = authHeader;
+  if (authHeader.startsWith('Bearer ')) {
+    sessionId = authHeader.substring(7); // Remove 'Bearer ' prefix
   }
 
   try {

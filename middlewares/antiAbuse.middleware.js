@@ -8,11 +8,38 @@
 const antiAbuseDetector = require('../utils/antiAbuseDetector');
 const ExamAttendance = require('../models/examAttendance.model');
 
+// Helper function to sanitize headers
+const sanitizeHeaders = (headers) => {
+  const sanitized = { ...headers };
+  
+  // Remove sensitive headers or replace with "present" indicator
+  if (sanitized.authorization) sanitized.authorization = 'Bearer [REDACTED]';
+  if (sanitized.cookie) sanitized.cookie = '[REDACTED]';
+  
+  return sanitized;
+};
+
 /**
  * Middleware to collect and analyze anti-abuse data
  */
 const collectAntiAbuseData = async (req, res, next) => {
   try {
+    // Skip in development mode for localhost origins
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const origin = req.headers.origin || '';
+    
+    if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+      // Just add a basic structure for controllers that expect antiAbuseData
+      req.antiAbuseData = {
+        requestData: { timestamp: new Date() },
+        headerAnalysis: { riskScore: 0 },
+        startTime: Date.now(),
+        jsChallenge: null,
+        riskFactors: []
+      };
+      return next();
+    }
+    
     // Skip for non-exam attendance routes
     if (!req.route?.path?.includes('attend') && !req.route?.path?.includes('submit-answer')) {
       return next();
@@ -26,7 +53,7 @@ const collectAntiAbuseData = async (req, res, next) => {
       endpoint: req.originalUrl,
       method: req.method,
       ip: req.ip || req.connection.remoteAddress,
-      headers: { ...req.headers },
+      headers: sanitizeHeaders(req.headers), // Sanitize headers to remove sensitive data
       requestSize: req.get('content-length') || 0,
       userAgent: req.get('user-agent') || '',
       referer: req.get('referer') || '',

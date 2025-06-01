@@ -4,10 +4,25 @@ const http = require('http');
 const socketIo = require('socket.io');
 const db = require('./config/db'); // Ensure this is the correct path to your db.js file
 const config = require("./config/config");
-require("dotenv").config();
-const { transporter } = require("./utils/emailUtils");
 const net = require('net'); // Added for port checking
 const attendanceUtils = require('./utils/attendanceUtils'); // Import attendance utilities
+
+// Import email utilities with error handling
+let emailUtils;
+try {
+  emailUtils = require("./utils/emailUtils");
+  console.log('Email utilities loaded successfully');
+} catch (error) {
+  console.warn('Failed to load email utilities:', error.message);
+  console.warn('Email functionality will be disabled');
+  emailUtils = { 
+    transporter: null, 
+    mailSender: async () => ({ 
+      messageId: 'email-disabled', 
+      response: 'Email functionality disabled' 
+    }) 
+  };
+}
 
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/users.routes");
@@ -24,17 +39,13 @@ const server = http.createServer(app);
 
 // Initialize Socket.IO with CORS configuration
 const io = socketIo(server, {
-  cors: {
-    origin: process.env.WS_CORS_ORIGIN || ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
-    methods: ["GET", "POST"],
-    credentials: true
-  }
+  cors: config.websocket.cors
 });
 
 // Make Socket.IO instance available globally
 global.io = io;
 
-const PORT = process.env.PORT || 3456;
+const PORT = config.port;
 
 // CORS configuration using settings from config.js
 app.use(cors({
@@ -47,13 +58,38 @@ app.use(cors({
 
 // Additional CORS headers for WebSocket support
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  // Get origin from request headers
+  const origin = req.headers.origin;
+  
+  // Check if the origin is allowed
+  if (origin && typeof config.cors.origin === 'function') {
+    config.cors.origin(origin, (err, allowed) => {
+      if (allowed) {
+        res.header('Access-Control-Allow-Origin', origin);
+      }
+    });
+  } else if (origin && Array.isArray(config.cors.origin) && config.cors.origin.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (origin && config.cors.origin === '*') {
+    res.header('Access-Control-Allow-Origin', '*');
+  } else if (config.nodeEnv === 'development') {
+    // In development, allow all origins
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  }
+  
+  // Set other CORS headers
+  res.header('Access-Control-Allow-Methods', Array.isArray(config.cors.methods) ? config.cors.methods.join(',') : 'GET,PUT,POST,DELETE,PATCH,OPTIONS');
+  
+  // Explicitly list all allowed headers instead of using wildcard
+  const allowedHeaders = Array.isArray(config.cors.allowedHeaders) 
+    ? config.cors.allowedHeaders.join(', ') 
+    : 'Origin, X-Requested-With, Content-Type, Accept, Authorization, headers';
+  
+  res.header('Access-Control-Allow-Headers', allowedHeaders);
   res.header('Access-Control-Allow-Credentials', 'true');
   
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
+    res.sendStatus(204); // No Content is more appropriate for OPTIONS
   } else {
     next();
   }

@@ -1,7 +1,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-const envs = ['PORT', 'NODE_ENV', 'CORS_ORIGIN', 'CORS_ALLOWED_HEADERS', 'CORS_METHODS', 'DB_SERVER_SELECTION_TIMEOUT_MS'];
+const envs = ['PORT', 'NODE_ENV', 'CORS_ORIGIN', 'CORS_ALLOWED_HEADERS', 'CORS_METHODS', 'DB_SERVER_SELECTION_TIMEOUT_MS', 'WS_CORS_ORIGIN'];
 const envs_req = ['PORT', 'DB_URL'];
 
 // Check if required environment variables are set
@@ -127,7 +127,7 @@ const config = {
   db: {
     url: process.env.DB_URL || process.env.DB_URI, // Add fallback to DB_URI
     options: {
-      serverSelectionTimeoutMS: parseInt(process.env.DB_SERVER_SELECTION_TIMEOUT_MS) || 500,
+      serverSelectionTimeoutMS: parseInt(process.env.DB_SERVER_SELECTION_TIMEOUT_MS) || 50000,
     },
   },
   cors: {
@@ -136,6 +136,24 @@ const config = {
     allowedHeaders: parseCorsArray(process.env.CORS_ALLOWED_HEADERS, defaultCorsOptions.allowedHeaders),
     credentials: true // Important for cookies
   },
+  websocket: {
+    cors: {
+      origin: parseCorsOrigin(process.env.WS_CORS_ORIGIN || process.env.CORS_ORIGIN),
+      methods: ["GET", "POST"],
+      credentials: true
+    }
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET,
+    sessionSecret: process.env.SESSION_SECRET
+  },
+  email: {
+    host: process.env.MAIL_HOST,
+    port: parseInt(process.env.MAIL_PORT) || 587,
+    secure: process.env.MAIL_SECURE === 'true',
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS
+  }
 };
 
 module.exports = config;

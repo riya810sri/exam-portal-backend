@@ -10,9 +10,18 @@
  */
 const blockPostman = (req, res, next) => {
   try {
+    // In development mode, we'll allow all requests but log suspicious ones
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
     const userAgent = req.get('user-agent') || '';
     const postmanToken = req.get('postman-token');
     const headers = req.headers;
+    const origin = req.headers.origin || '';
+    
+    // Skip checking for localhost origins in development
+    if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+      return next();
+    }
     
     // List of user-agent patterns that indicate API testing tools
     const blockedUserAgents = [
@@ -140,6 +149,15 @@ const blockPostman = (req, res, next) => {
  */
 const blockPostmanLenient = (req, res, next) => {
   try {
+    // In development mode, we'll allow all requests
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const origin = req.headers.origin || '';
+    
+    // Skip checking for localhost origins in development
+    if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+      return next();
+    }
+    
     const userAgent = req.get('user-agent') || '';
     const postmanToken = req.get('postman-token');
     

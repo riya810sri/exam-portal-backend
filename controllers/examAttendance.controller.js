@@ -2169,16 +2169,33 @@ const reportCheating = async (req, res) => {
       });
     }
 
-    // Find the in-progress attendance record
-    const attendance = await ExamAttendance.findOne({
+    // First try to find an in-progress attendance record
+    let attendance = await ExamAttendance.findOne({
       examId,
       userId,
       status: "IN_PROGRESS"
     });
 
+    // If no active exam, try to find the most recent attendance record for this exam
     if (!attendance) {
-      return res.status(404).json({ 
-        message: "No active exam found to report cheating" 
+      attendance = await ExamAttendance.findOne({
+        examId,
+        userId
+      }).sort({ startTime: -1 }); // Get most recent attempt
+    }
+
+    // If still no attendance record found, create a basic record to store the evidence
+    if (!attendance) {
+      console.log(`Creating placeholder record for cheating report: User ${userId}, Exam ${examId}`);
+      
+      // Create a basic record to track the suspicious activity
+      attendance = new ExamAttendance({
+        examId,
+        userId,
+        status: "SUSPICIOUS_ACTIVITY",
+        startTime: new Date(),
+        flaggedForReview: true,
+        cheatDetected: true
       });
     }
 

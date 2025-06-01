@@ -60,7 +60,7 @@ router.get("/my-exams/:status", authenticateUser, (req, res) => {
   req.query.statusFilter = req.params.status;
   getUserExams(req, res);
 });
-
+// /:examId/attend
 // Normal users can attend, submit answers, and complete exams
 router.get("/:examId/attend", blockPostman, authenticateUser, collectAntiAbuseData, (req, res, next) => {
   // Add debug logging for exam attendance attempts
@@ -113,11 +113,15 @@ router.get("/admin/history", authenticateUser, isAdmin, adminGetAllUserHistory);
 
 // Cheating detection routes
 // Client-side reporting of cheating incidents
-router.post("/:examId/report-cheating", blockPostman, authenticateUser, 
+router.post("/:examId/report-cheating", authenticateUser, collectAntiAbuseData,
   reportCheating ? reportCheating : fallback("reportCheating"));
 
 // Start monitoring for cheating detection
-router.post("/:examId/start-monitoring", blockPostman, authenticateUser, collectAntiAbuseData,
+router.post("/:examId/start-monitoring", authenticateUser, collectAntiAbuseData,
+  startMonitoring ? startMonitoring : fallback("startMonitoring"));
+
+// Alternative URL format for start-monitoring
+router.post("/start-monitoring/:examId", authenticateUser, collectAntiAbuseData,
   startMonitoring ? startMonitoring : fallback("startMonitoring"));
 
 // Admin-only route to get all cheating reports for an exam

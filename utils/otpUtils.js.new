@@ -1,23 +1,7 @@
 // Utility functions for OTP generation and verification
 const crypto = require('crypto');
 const config = require("../config/config");
-
-// Import email utilities with fallback for transporter
-let emailUtils;
-try {
-  emailUtils = require('./emailUtils');
-} catch (error) {
-  console.warn('Failed to load email utilities in otpUtils:', error.message);
-  emailUtils = { 
-    transporter: {
-      sendMail: async () => ({ 
-        messageId: 'email-disabled', 
-        response: 'Email functionality disabled' 
-      })
-    }
-  };
-}
-const { transporter } = emailUtils;
+const { transporter } = require('./emailUtils');
 
 /**
  * Generates a random 6-digit OTP
@@ -69,7 +53,7 @@ const sendOTPEmail = async (email, otp, name) => {
 
     // Send the email using the shared transporter
     let info = await transporter.sendMail(mailOptions);
-    console.log(`✓ OTP email sent to ${email}: ${info.messageId}`);
+    console.log(`OTP email sent to ${email}: ${info.messageId}`);
     
     // Return the info object from nodemailer
     return info;
@@ -78,14 +62,8 @@ const sendOTPEmail = async (email, otp, name) => {
     
     // In development mode, still proceed but log the OTP for testing
     if (config.nodeEnv === 'development') {
-      console.log(`📧 [DEV MODE] OTP for ${email}: ${otp}`);
-      return {
-        messageId: `dev-mode-otp-${Date.now()}@localhost`,
-        accepted: [email],
-        rejected: [],
-        pending: [],
-        response: 'Dev mode - OTP email logged instead of sent'
-      };
+      console.log(`[DEV MODE] Would have sent OTP: ${otp} to ${email}`);
+      return { messageId: 'dev-mode-otp', fakeOTP: otp };
     }
     
     throw new Error(`Failed to send verification email: ${error.message}`);
