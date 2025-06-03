@@ -74,6 +74,7 @@ const attendExam = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts
 
     console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
     
@@ -133,9 +134,7 @@ const attendExam = async (req, res) => {
 
     if (highestScoreAttempt) {
       const percentage = (highestScoreAttempt.score / highestScoreAttempt.totalQuestions) * 100;
-      const passingScore = exam.passingScore || 60; // Use exam's passing score if available, default to 60%
-      
-      if (percentage >= passingScore) {
+      if (percentage >= 60) {
         console.log(`User has already passed this exam with ${percentage.toFixed(2)}%`);
         return res.status(403).json({
           message: "You have already passed this exam. No additional attempts are permitted.",
@@ -148,10 +147,6 @@ const attendExam = async (req, res) => {
         });
       }
     }
-    
-    // Use the max attempts from the exam model or fallback to default
-    const MAX_ATTEMPTS = exam.maxAttempts || 3;
-    console.log(`Maximum attempts allowed for this exam: ${MAX_ATTEMPTS}`);
     
     // Get count of completed attempts to enforce MAX_ATTEMPTS limit
     const completedAttemptsCount = await ExamAttendance.countDocuments({
@@ -171,8 +166,6 @@ const attendExam = async (req, res) => {
     
     // Get real attempt count and fix inconsistencies
     const realAttemptCount = await getRealAttemptCount(examId, userId);
-    
-    let attendance;
     
     // Check for existing in-progress attempts that need to be canceled when starting a new attempt
     if (newAttempt === 'true') {
@@ -223,11 +216,10 @@ const attendExam = async (req, res) => {
           userId,
           totalQuestions: exam.sections.mcqs.length,
           startTime: new Date(),
-          status: "IN_PROGRESS", // Explicitly set status to IN_PROGRESS
+          status: "IN_PROGRESS",
           attemptNumber: confirmedAttemptNumber
         });
         
-        // Save the attendance record immediately to ensure status is IN_PROGRESS
         await attendance.save();
         console.log(`New attendance record created with ID: ${attendance._id} and attempt #${confirmedAttemptNumber}`);
         
@@ -330,17 +322,12 @@ const attendExam = async (req, res) => {
             userId,
             totalQuestions: exam.sections.mcqs.length,
             startTime: new Date(),
-            status: "IN_PROGRESS", // Explicitly set status to IN_PROGRESS
+            status: "IN_PROGRESS",
             attemptNumber: attemptNumber
           });
           
-          // Save the attendance record immediately to ensure status is IN_PROGRESS
           await attendance.save();
           console.log(`New first attendance record created with ID: ${attendance._id}`);
-          
-          // Verify the status was saved correctly
-          const savedAttendance = await ExamAttendance.findById(attendance._id);
-          console.log(`Verified attendance status: ${savedAttendance.status}`);
           
           // Randomize questions and store in memory
           const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -354,7 +341,7 @@ const attendExam = async (req, res) => {
             randomizedQuestions,
             userAnswers: {},
             attemptId: attendance._id,
-            attemptNumber: attemptNumber // Store attempt number in memory
+            attemptNumber: 1 // Store attempt number in memory
           };
           
           // Also store in the database for persistence
@@ -363,14 +350,14 @@ const attendExam = async (req, res) => {
             await TmpExamStudentData.deleteMany({ 
               userId, 
               examId, 
-              attemptNumber: attemptNumber 
+              attemptNumber: 1 
             });
             
             // Create new temporary data
             const tmpData = new TmpExamStudentData({
               userId,
               examId,
-              attemptNumber: attemptNumber,
+              attemptNumber: 1,
               questionIds: randomizedQuestions.map(q => q._id),
               answers: []
             });
@@ -401,13 +388,6 @@ const attendExam = async (req, res) => {
         }
       } else {
         console.log(`Found existing in-progress attempt: ${attendance._id}`);
-        
-        // Ensure the status is set to IN_PROGRESS
-        if (attendance.status !== "IN_PROGRESS") {
-          attendance.status = "IN_PROGRESS";
-          await attendance.save();
-          console.log(`Updated attendance status to IN_PROGRESS for ID: ${attendance._id}`);
-        }
         
         const attemptNumber = attendance.attemptNumber || 1;
         
@@ -488,33 +468,6 @@ const attendExam = async (req, res) => {
           
           console.log("Re-initialized question data in memory");
         }
-      }
-    }
-    
-    // Double-check that attendance exists and has IN_PROGRESS status
-    if (!attendance || attendance.status !== "IN_PROGRESS") {
-      console.log("Warning: Attendance record not found or not in progress");
-      
-      // Try to find or create a valid attendance record
-      if (!attendance) {
-        // Create a new attendance record if none exists
-        const attemptNumber = await attendanceUtils.getNextAttemptNumber(userId, examId);
-        attendance = new ExamAttendance({
-          examId,
-          userId,
-          totalQuestions: exam.sections.mcqs.length,
-          startTime: new Date(),
-          status: "IN_PROGRESS",
-          attemptNumber: attemptNumber
-        });
-        
-        await attendance.save();
-        console.log(`Created missing attendance record with ID: ${attendance._id}`);
-      } else if (attendance.status !== "IN_PROGRESS") {
-        // Update the status if it's not IN_PROGRESS
-        attendance.status = "IN_PROGRESS";
-        await attendance.save();
-        console.log(`Fixed attendance status to IN_PROGRESS for ID: ${attendance._id}`);
       }
     }
     
@@ -995,10 +948,9 @@ const completeExam = async (req, res) => {
     // Calculate percentage for pass/fail determination
     const totalQuestions = exam.sections.mcqs.length;
     const percentage = totalQuestions > 0 ? (score / totalQuestions) * 100 : 0;
-    const passingScore = exam.passingScore || 60; // Use exam's passing score or default to 60%
-    const passed = percentage >= passingScore;
+    const passed = percentage >= 60;
     
-    console.log(`Exam results: Score ${score}/${totalQuestions} (${percentage.toFixed(2)}%), Passing score: ${passingScore}%, ${passed ? 'PASSED' : 'FAILED'}`);
+    console.log(`Exam results: Score ${score}/${totalQuestions} (${percentage.toFixed(2)}%), ${passed ? 'PASSED' : 'FAILED'}`);
 
     // Update attendance record with results
     attendance.status = "COMPLETED";
@@ -1052,7 +1004,7 @@ const completeExam = async (req, res) => {
     
     // Make sure we explicitly send a response
     return res.status(200).json({
-      message: "Exam completed successfully",
+      // message: "Exam completed successfully",
       score: score,
       totalQuestions: attendance.totalQuestions,
       attemptedQuestions: attendance.attemptedQuestions,
@@ -1060,9 +1012,7 @@ const completeExam = async (req, res) => {
       result: passed ? "pass" : "failed",
       certificateGenerated: certificateInfo ? "yes" : "no",
       certificateId: certificateInfo?.certificateId || null,
-      emailSent: emailSent,
-      shouldExitFullscreen: true, // Add flag to trigger exiting fullscreen mode
-      examCompleted: true
+      emailSent: emailSent
     });
 
   } catch (error) {
@@ -1088,10 +1038,7 @@ const getExamStatus = async (req, res) => {
     }).sort({ startTime: -1 });
     
     if (!attendance) {
-      return res.status(404).json({ 
-        message: "No exam session found",
-        status: false // Explicitly return status: false when no attendance found
-      });
+      return res.status(404).json({ message: "No exam session found" });
     }
 
     // Clean up any stale attendances for this user automatically
@@ -1121,17 +1068,13 @@ const getExamStatus = async (req, res) => {
     // For debugging purposes, log the actual status from the database
     console.log(`Exam status for user ${userId}, exam ${examId}: ${statusInfo.status}, attempts: ${statusInfo.totalAttempts}`);
 
-    // Ensure we return a boolean status flag for client compatibility
-    statusInfo.status = statusInfo.status === "IN_PROGRESS"; // Convert to boolean for backward compatibility
-
     res.status(200).json(statusInfo);
 
   } catch (error) {
     console.error("Error in getExamStatus:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      details: error.message,
-      status: false // Ensure status is false on error
+      details: error.message 
     });
   }
 };
@@ -1322,6 +1265,7 @@ const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
     const { statusFilter, search, sort = 'recent', showAll = 'false' } = req.query;
+    const MAX_ATTEMPTS = 5; // Maximum allowed attempts (increased from 2 to 5)
     
     // Build the query based on filters
     const query = { userId };
@@ -1339,7 +1283,7 @@ const getUserExams = async (req, res) => {
     const examAttendances = await ExamAttendance.find(query)
       .populate({
         path: 'examId',
-        select: 'title description duration status publishedAt maxAttempts passingScore',
+        select: 'title description duration status publishedAt',
       })
       .sort({ startTime: -1 }); // Sort by most recent first
     
@@ -1368,16 +1312,11 @@ const getUserExams = async (req, res) => {
       }
       
       if (!examMap[examId]) {
-        const maxAttempts = attendance.examId.maxAttempts || 3; // Get max attempts from exam or default to 3
-        const passingScore = attendance.examId.passingScore || 60; // Get passing score from exam or default to 60%
-        
         examMap[examId] = {
           examId: examId,
           examTitle: attendance.examId.title || 'Unknown Exam',
           examDescription: attendance.examId.description || '',
           examDuration: attendance.examId.duration || 0,
-          maxAttempts: maxAttempts,
-          passingScore: passingScore,
           bestScore: 0,
           bestPercentage: '0.00',
           bestAttemptNumber: 0,
@@ -1394,11 +1333,8 @@ const getUserExams = async (req, res) => {
         ? ((attendance.score / attendance.totalQuestions) * 100).toFixed(2) 
         : '0.00';
       
-      // Get passing score from the exam
-      const passingScore = examMap[examId].passingScore;
-      
-      // Determine if the user passed (using exam's passing threshold)
-      const passed = parseFloat(percentage) >= passingScore;
+      // Determine if the user passed (60% is passing threshold)
+      const passed = parseFloat(percentage) >= 60;
       
       // Count completed attempts
       if (attendance.status === 'COMPLETED' || attendance.status === 'TIMED_OUT') {
@@ -1421,13 +1357,13 @@ const getUserExams = async (req, res) => {
       // Format timestamp for better readability
       const startDate = new Date(attendance.startTime);
       const formattedStartTime = startDate.toLocaleDateString() + ' ' + 
-                               startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       
       let formattedEndTime = 'N/A';
       if (attendance.endTime) {
         const endDate = new Date(attendance.endTime);
         formattedEndTime = endDate.toLocaleDateString() + ' ' + 
-                         endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       }
       
       // Calculate duration in minutes (if completed)
@@ -1461,8 +1397,7 @@ const getUserExams = async (req, res) => {
     // Determine which exams should be hidden (passed or max attempts reached)
     // and mark them accordingly
     Object.values(examMap).forEach(exam => {
-      const maxAttempts = exam.maxAttempts;
-      if (exam.hasPassed || exam.completedAttempts >= maxAttempts) {
+      if (exam.hasPassed || exam.completedAttempts >= MAX_ATTEMPTS) {
         exam.shouldHide = true;
       }
     });
@@ -1498,8 +1433,8 @@ const getUserExams = async (req, res) => {
       exam.attempts.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
       
       // Add remaining attempts info
-      exam.remainingAttempts = Math.max(0, exam.maxAttempts - exam.completedAttempts);
-      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < exam.maxAttempts;
+      exam.remainingAttempts = Math.max(0, MAX_ATTEMPTS - exam.completedAttempts);
+      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < MAX_ATTEMPTS;
     });
     
     // Prepare summary stats
@@ -1519,7 +1454,7 @@ const getUserExams = async (req, res) => {
         passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%',
         hiddenExams: Object.values(examMap).filter(exam => exam.shouldHide).length,
         showAll: showAll === 'true',
-        maxAttemptsAllowed: filteredExams.length > 0 ? filteredExams[0].maxAttempts : 3 // Default to 3 if no exams
+        maxAttemptsAllowed: MAX_ATTEMPTS
       },
       exams: filteredExams.map(exam => ({
         ...exam,
@@ -1529,8 +1464,8 @@ const getUserExams = async (req, res) => {
           inProgress: exam.attempts.filter(a => a.status === 'IN_PROGRESS').length,
           remaining: exam.remainingAttempts,
           canAttempt: exam.canAttempt,
-          maxAttemptsReached: exam.completedAttempts >= exam.maxAttempts,
-          maxAttempts: exam.maxAttempts
+          maxAttemptsReached: exam.completedAttempts >= MAX_ATTEMPTS,
+          maxAttempts: MAX_ATTEMPTS
         }
       }))
     });
@@ -2398,11 +2333,6 @@ const startMonitoring = async (req, res) => {
     const { examId } = req.params;
     const userId = req.user._id;
     
-    // Import monitoring utilities
-    const { generateKeyboardMonitoringScript } = require('../utils/keyboardMonitoring');
-    const { generateMouseMonitoringScript } = require('../utils/mouseMonitoring');
-    const { generateFullscreenManagerScript } = require('../utils/fullscreenManager');
-    
     // Check student restrictions first
     const StudentRestrictionManager = require('../utils/studentRestrictionManager');
     const studentRestrictionManager = new StudentRestrictionManager();
@@ -2469,19 +2399,11 @@ const startMonitoring = async (req, res) => {
         userId.toString()
       );
       
-      // Generate monitoring scripts
-      const keyboardMonitoringScript = generateKeyboardMonitoringScript();
-      const mouseMonitoringScript = generateMouseMonitoringScript();
-      const fullscreenManagerScript = generateFullscreenManagerScript();
-      
       // Return appropriate risk level with socket connection details
       const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
       
       console.log(`✅ Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
       console.log(`🔌 Dynamic Socket.IO server created on port ${socketInfo.socket_port}`);
-      console.log(`⌨️ Keyboard monitoring enabled`);
-      console.log(`🖱️ Mouse monitoring enabled with 2-second interval`);
-      console.log(`🖥️ Fullscreen mode enabled for exam`);
       
       res.status(200).json({
         message: "Monitoring started successfully",
@@ -2503,17 +2425,8 @@ const startMonitoring = async (req, res) => {
           requiredEvents: [
             'browser_validation',
             'exam_ready',
-            'security_heartbeat',
-            'keyboard_data',
-            'mouse_data',
-            'fullscreen_status'
+            'security_heartbeat'
           ]
-        },
-        // Monitoring scripts to execute on client
-        scripts: {
-          keyboardMonitoring: keyboardMonitoringScript,
-          mouseMonitoring: mouseMonitoringScript,
-          fullscreenManager: fullscreenManagerScript
         }
       });
       
