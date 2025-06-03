@@ -9,6 +9,7 @@ const SecurityEvent = require('../models/securityEvent.model');
 const { socketAntiAbuseManager } = require('./socketAntiAbuse');
 const { StudentRestrictionManager } = require('./studentRestrictionManager');
 const { processKeyboardData } = require('./keyboardMonitoring');
+const { processMouseData } = require('./mouseMonitoring');
 const ExamAttendance = require('../models/examAttendance.model');
 
 class DynamicSocketManager {
@@ -162,6 +163,15 @@ class DynamicSocketManager {
           await this.processKeyboardData(data, monit_id, exam_id, student_id, socket);
         } catch (error) {
           console.error('Error processing keyboard data:', error);
+        }
+      });
+
+      // Handle mouse monitoring data
+      socket.on('mouse_data', async (data) => {
+        try {
+          await this.processMouseData(data, monit_id, exam_id, student_id, socket);
+        } catch (error) {
+          console.error('Error processing mouse data:', error);
         }
       });
 
@@ -597,10 +607,10 @@ class DynamicSocketManager {
 
     try {
       // Process and analyze keyboard data
-      const { processed, analysis } = processKeyboardData(data.events);
+      const { processed, analysis, keybindingAnalysis, combinedRiskScore } = processKeyboardData(data.events);
       
       // If risk score is high, log a security event
-      if (analysis.riskScore > 50) {
+      if (combinedRiskScore > 50) {
         const securityEvent = new SecurityEvent({
           monit_id,
           exam_id,
@@ -608,12 +618,14 @@ class DynamicSocketManager {
           event_type: 'KEYBOARD_ANOMALY',
           timestamp: new Date(),
           details: {
-            riskScore: analysis.riskScore,
-            patterns: analysis.patterns,
-            anomalies: analysis.anomalies,
-            keyCount: analysis.keyCount
+            riskScore: combinedRiskScore,
+            keyboardPatterns: analysis.patterns,
+            keyboardAnomalies: analysis.anomalies,
+            keyCount: analysis.keyCount,
+            keybindingViolations: keybindingAnalysis.keybindingViolations,
+            prohibitedBindings: keybindingAnalysis.detectedBindings.filter(b => b.isProhibited)
           },
-          risk_score: analysis.riskScore,
+          risk_score: combinedRiskScore,
           is_suspicious: true,
           user_agent: socket.handshake.headers['user-agent'],
           ip_address: socket.handshake.address
@@ -621,7 +633,7 @@ class DynamicSocketManager {
 
         await securityEvent.save();
         
-        console.log(`⚠️ Keyboard anomaly detected for ${student_id} in exam ${exam_id} (Risk: ${analysis.riskScore})`);
+        console.log(`⚠️ Keyboard/keybinding anomaly detected for ${student_id} in exam ${exam_id} (Risk: ${combinedRiskScore})`);
         
         // Emit to admin dashboard if global.io exists
         if (global.io) {
@@ -630,7 +642,8 @@ class DynamicSocketManager {
             exam_id,
             student_id,
             event_type: 'KEYBOARD_ANOMALY',
-            risk_score: analysis.riskScore,
+            risk_score: combinedRiskScore,
+            keybindingViolations: keybindingAnalysis.keybindingViolations.length,
             timestamp: new Date()
           });
         }
@@ -653,6 +666,144 @@ class DynamicSocketManager {
         attendance.behaviorProfile.keystrokePattern = processed.map(event => event.timeDiff || 0);
         attendance.behaviorProfile.avgKeyboardInterval = analysis.meanInterval;
         
+        // Update keybinding-related data
+        attendance.behaviorProfile.detectedKeybindings = keybindingAnalysis.detectedBindings.slice(0, 10); // Store top 10 keybindings
+        attendance.behaviorProfile.prohibitedKeybindingCount = keybindingAnalysis.prohibitedBindingCount;
+        attendance.behaviorProfile.keybindingViolations = keybindingAnalysis.keybindingViolations;
+        
+        // Update automation risk if it's higher than the current value
+        if (!attendance.behaviorProfile.automationRisk || 
+            combinedRiskScore > attendance.behaviorProfile.automationRisk) {
+          attendance.behaviorProfile.automationRisk = combinedRiskScore;
+        }
+        
+        // Update risk assessment if needed
+        if (attendance.riskAssessment) {
+          // Add keyboard or keybinding factors as needed
+          if (analysis.riskScore > 70) {
+            attendance.riskAssessment.riskFactors.push({
+              factor: 'KEYBOARD_PATTERN',
+              score: analysis.riskScore,
+              description: 'Suspicious keyboard activity detected',
+              timestamp: new Date()
+            });
+          }
+          
+          // Add keybinding violations if detected
+          if (keybindingAnalysis.keybindingRiskScore > 50) {
+            // Add only the most severe violations (up to 3)
+            keybindingAnalysis.keybindingViolations.slice(0, 3).forEach(violation => {
+              attendance.riskAssessment.riskFactors.push({
+                factor: 'PROHIBITED_KEYBINDING',
+                score: keybindingAnalysis.keybindingRiskScore,
+                description: `Prohibited keybinding detected: ${violation.keys.join('+')} (${violation.description})`,
+                timestamp: new Date(),
+                details: violation
+              });
+            });
+            
+            // If we have prohibited bindings, increment violation count
+            if (keybindingAnalysis.prohibitedBindingCount > 0) {
+              attendance.riskAssessment.violationCount += 1;
+            }
+          }
+          
+          // Recalculate overall risk score
+          const riskFactors = attendance.riskAssessment.riskFactors;
+          const totalRisk = riskFactors.reduce((sum, factor) => sum + factor.score, 0);
+          attendance.riskAssessment.overallRiskScore = Math.min(100, totalRisk / riskFactors.length);
+          attendance.riskAssessment.lastUpdated = new Date();
+        }
+        
+        await attendance.save();
+        
+        // If we detected prohibited keybindings with high confidence, notify the client
+        if (keybindingAnalysis.prohibitedBindingCount > 0 && keybindingAnalysis.keybindingRiskScore > 70) {
+          socket.emit('security_warning', {
+            type: 'PROHIBITED_KEYBINDING',
+            message: 'Use of prohibited keyboard shortcuts detected',
+            details: {
+              count: keybindingAnalysis.prohibitedBindingCount,
+              examples: keybindingAnalysis.keybindingViolations.slice(0, 3).map(v => v.description)
+            },
+            timestamp: new Date()
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error processing keyboard data:', error);
+    }
+  }
+
+  /**
+   * Process mouse monitoring data
+   */
+  async processMouseData(data, monit_id, exam_id, student_id, socket) {
+    if (!data || !data.events || !Array.isArray(data.events)) {
+      return;
+    }
+
+    try {
+      // Process and analyze mouse data
+      const { processed, analysis } = processMouseData(data.events);
+      
+      // If risk score is high, log a security event
+      if (analysis.riskScore > 60) {
+        const securityEvent = new SecurityEvent({
+          monit_id,
+          exam_id,
+          student_id,
+          event_type: 'MOUSE_ANOMALY',
+          timestamp: new Date(),
+          details: {
+            riskScore: analysis.riskScore,
+            patterns: analysis.patterns,
+            anomalies: analysis.anomalies,
+            mouseCount: analysis.mouseCount,
+            straightLineRatio: analysis.straightLineRatio,
+            movementConsistency: analysis.movementConsistency
+          },
+          risk_score: analysis.riskScore,
+          is_suspicious: true,
+          user_agent: socket.handshake.headers['user-agent'],
+          ip_address: socket.handshake.address
+        });
+
+        await securityEvent.save();
+        
+        console.log(`⚠️ Mouse anomaly detected for ${student_id} in exam ${exam_id} (Risk: ${analysis.riskScore})`);
+        
+        // Emit to admin dashboard if global.io exists
+        if (global.io) {
+          global.io.to('admin-dashboard').emit('security_alert', {
+            monit_id,
+            exam_id,
+            student_id,
+            event_type: 'MOUSE_ANOMALY',
+            risk_score: analysis.riskScore,
+            timestamp: new Date()
+          });
+        }
+      }
+      
+      // Update the exam attendance record with mouse behavior data
+      const attendance = await ExamAttendance.findOne({
+        examId: exam_id,
+        userId: student_id,
+        status: "IN_PROGRESS"
+      });
+      
+      if (attendance) {
+        // Initialize behaviorProfile if it doesn't exist
+        if (!attendance.behaviorProfile) {
+          attendance.behaviorProfile = {};
+        }
+        
+        // Update mouse-related behavior data
+        attendance.behaviorProfile.mouseMovements = processed.slice(-30); // Keep last 30 movements
+        attendance.behaviorProfile.avgMouseSpeed = analysis.meanSpeed;
+        attendance.behaviorProfile.mouseConsistency = analysis.movementConsistency;
+        
         // Update automation risk if it's higher than the current value
         if (!attendance.behaviorProfile.automationRisk || 
             analysis.riskScore > attendance.behaviorProfile.automationRisk) {
@@ -660,14 +811,16 @@ class DynamicSocketManager {
         }
         
         // Update risk assessment if needed
-        if (analysis.riskScore > 70 && attendance.riskAssessment) {
-          // Add keyboard monitoring as a risk factor
-          attendance.riskAssessment.riskFactors.push({
-            factor: 'KEYBOARD_PATTERN',
-            score: analysis.riskScore,
-            description: 'Suspicious keyboard activity detected',
-            timestamp: new Date()
-          });
+        if (attendance.riskAssessment) {
+          // Add mouse-related factors if risky
+          if (analysis.riskScore > 70) {
+            attendance.riskAssessment.riskFactors.push({
+              factor: 'MOUSE_PATTERN',
+              score: analysis.riskScore,
+              description: 'Suspicious mouse activity detected',
+              timestamp: new Date()
+            });
+          }
           
           // Recalculate overall risk score
           const riskFactors = attendance.riskAssessment.riskFactors;
@@ -679,7 +832,7 @@ class DynamicSocketManager {
         await attendance.save();
       }
     } catch (error) {
-      console.error('Error processing keyboard data:', error);
+      console.error('Error processing mouse data:', error);
     }
   }
 }

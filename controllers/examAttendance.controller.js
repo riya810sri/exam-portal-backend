@@ -74,7 +74,6 @@ const attendExam = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts
 
     console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
     
@@ -134,7 +133,9 @@ const attendExam = async (req, res) => {
 
     if (highestScoreAttempt) {
       const percentage = (highestScoreAttempt.score / highestScoreAttempt.totalQuestions) * 100;
-      if (percentage >= 60) {
+      const passingScore = exam.passingScore || 60; // Use exam's passing score if available, default to 60%
+      
+      if (percentage >= passingScore) {
         console.log(`User has already passed this exam with ${percentage.toFixed(2)}%`);
         return res.status(403).json({
           message: "You have already passed this exam. No additional attempts are permitted.",
@@ -147,6 +148,10 @@ const attendExam = async (req, res) => {
         });
       }
     }
+    
+    // Use the max attempts from the exam model or fallback to default
+    const MAX_ATTEMPTS = exam.maxAttempts || 3;
+    console.log(`Maximum attempts allowed for this exam: ${MAX_ATTEMPTS}`);
     
     // Get count of completed attempts to enforce MAX_ATTEMPTS limit
     const completedAttemptsCount = await ExamAttendance.countDocuments({
@@ -948,9 +953,10 @@ const completeExam = async (req, res) => {
     // Calculate percentage for pass/fail determination
     const totalQuestions = exam.sections.mcqs.length;
     const percentage = totalQuestions > 0 ? (score / totalQuestions) * 100 : 0;
-    const passed = percentage >= 60;
+    const passingScore = exam.passingScore || 60; // Use exam's passing score or default to 60%
+    const passed = percentage >= passingScore;
     
-    console.log(`Exam results: Score ${score}/${totalQuestions} (${percentage.toFixed(2)}%), ${passed ? 'PASSED' : 'FAILED'}`);
+    console.log(`Exam results: Score ${score}/${totalQuestions} (${percentage.toFixed(2)}%), Passing score: ${passingScore}%, ${passed ? 'PASSED' : 'FAILED'}`);
 
     // Update attendance record with results
     attendance.status = "COMPLETED";
@@ -1004,7 +1010,7 @@ const completeExam = async (req, res) => {
     
     // Make sure we explicitly send a response
     return res.status(200).json({
-      // message: "Exam completed successfully",
+      message: "Exam completed successfully",
       score: score,
       totalQuestions: attendance.totalQuestions,
       attemptedQuestions: attendance.attemptedQuestions,
@@ -1012,7 +1018,9 @@ const completeExam = async (req, res) => {
       result: passed ? "pass" : "failed",
       certificateGenerated: certificateInfo ? "yes" : "no",
       certificateId: certificateInfo?.certificateId || null,
-      emailSent: emailSent
+      emailSent: emailSent,
+      shouldExitFullscreen: true, // Add flag to trigger exiting fullscreen mode
+      examCompleted: true
     });
 
   } catch (error) {
@@ -1265,7 +1273,6 @@ const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
     const { statusFilter, search, sort = 'recent', showAll = 'false' } = req.query;
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts (increased from 2 to 5)
     
     // Build the query based on filters
     const query = { userId };
@@ -1283,7 +1290,7 @@ const getUserExams = async (req, res) => {
     const examAttendances = await ExamAttendance.find(query)
       .populate({
         path: 'examId',
-        select: 'title description duration status publishedAt',
+        select: 'title description duration status publishedAt maxAttempts passingScore',
       })
       .sort({ startTime: -1 }); // Sort by most recent first
     
@@ -1312,11 +1319,16 @@ const getUserExams = async (req, res) => {
       }
       
       if (!examMap[examId]) {
+        const maxAttempts = attendance.examId.maxAttempts || 3; // Get max attempts from exam or default to 3
+        const passingScore = attendance.examId.passingScore || 60; // Get passing score from exam or default to 60%
+        
         examMap[examId] = {
           examId: examId,
           examTitle: attendance.examId.title || 'Unknown Exam',
           examDescription: attendance.examId.description || '',
           examDuration: attendance.examId.duration || 0,
+          maxAttempts: maxAttempts,
+          passingScore: passingScore,
           bestScore: 0,
           bestPercentage: '0.00',
           bestAttemptNumber: 0,
@@ -1333,8 +1345,11 @@ const getUserExams = async (req, res) => {
         ? ((attendance.score / attendance.totalQuestions) * 100).toFixed(2) 
         : '0.00';
       
-      // Determine if the user passed (60% is passing threshold)
-      const passed = parseFloat(percentage) >= 60;
+      // Get passing score from the exam
+      const passingScore = examMap[examId].passingScore;
+      
+      // Determine if the user passed (using exam's passing threshold)
+      const passed = parseFloat(percentage) >= passingScore;
       
       // Count completed attempts
       if (attendance.status === 'COMPLETED' || attendance.status === 'TIMED_OUT') {
@@ -1357,13 +1372,13 @@ const getUserExams = async (req, res) => {
       // Format timestamp for better readability
       const startDate = new Date(attendance.startTime);
       const formattedStartTime = startDate.toLocaleDateString() + ' ' + 
-                                startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                               startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       
       let formattedEndTime = 'N/A';
       if (attendance.endTime) {
         const endDate = new Date(attendance.endTime);
         formattedEndTime = endDate.toLocaleDateString() + ' ' + 
-                          endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                         endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       }
       
       // Calculate duration in minutes (if completed)
@@ -1397,7 +1412,8 @@ const getUserExams = async (req, res) => {
     // Determine which exams should be hidden (passed or max attempts reached)
     // and mark them accordingly
     Object.values(examMap).forEach(exam => {
-      if (exam.hasPassed || exam.completedAttempts >= MAX_ATTEMPTS) {
+      const maxAttempts = exam.maxAttempts;
+      if (exam.hasPassed || exam.completedAttempts >= maxAttempts) {
         exam.shouldHide = true;
       }
     });
@@ -1433,8 +1449,8 @@ const getUserExams = async (req, res) => {
       exam.attempts.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
       
       // Add remaining attempts info
-      exam.remainingAttempts = Math.max(0, MAX_ATTEMPTS - exam.completedAttempts);
-      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < MAX_ATTEMPTS;
+      exam.remainingAttempts = Math.max(0, exam.maxAttempts - exam.completedAttempts);
+      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < exam.maxAttempts;
     });
     
     // Prepare summary stats
@@ -1454,7 +1470,7 @@ const getUserExams = async (req, res) => {
         passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%',
         hiddenExams: Object.values(examMap).filter(exam => exam.shouldHide).length,
         showAll: showAll === 'true',
-        maxAttemptsAllowed: MAX_ATTEMPTS
+        maxAttemptsAllowed: filteredExams.length > 0 ? filteredExams[0].maxAttempts : 3 // Default to 3 if no exams
       },
       exams: filteredExams.map(exam => ({
         ...exam,
@@ -1464,8 +1480,8 @@ const getUserExams = async (req, res) => {
           inProgress: exam.attempts.filter(a => a.status === 'IN_PROGRESS').length,
           remaining: exam.remainingAttempts,
           canAttempt: exam.canAttempt,
-          maxAttemptsReached: exam.completedAttempts >= MAX_ATTEMPTS,
-          maxAttempts: MAX_ATTEMPTS
+          maxAttemptsReached: exam.completedAttempts >= exam.maxAttempts,
+          maxAttempts: exam.maxAttempts
         }
       }))
     });
@@ -2333,8 +2349,10 @@ const startMonitoring = async (req, res) => {
     const { examId } = req.params;
     const userId = req.user._id;
     
-    // Import keyboard monitoring utility
+    // Import monitoring utilities
     const { generateKeyboardMonitoringScript } = require('../utils/keyboardMonitoring');
+    const { generateMouseMonitoringScript } = require('../utils/mouseMonitoring');
+    const { generateFullscreenManagerScript } = require('../utils/fullscreenManager');
     
     // Check student restrictions first
     const StudentRestrictionManager = require('../utils/studentRestrictionManager');
@@ -2402,8 +2420,10 @@ const startMonitoring = async (req, res) => {
         userId.toString()
       );
       
-      // Generate keyboard monitoring script
+      // Generate monitoring scripts
       const keyboardMonitoringScript = generateKeyboardMonitoringScript();
+      const mouseMonitoringScript = generateMouseMonitoringScript();
+      const fullscreenManagerScript = generateFullscreenManagerScript();
       
       // Return appropriate risk level with socket connection details
       const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
@@ -2411,6 +2431,8 @@ const startMonitoring = async (req, res) => {
       console.log(`✅ Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
       console.log(`🔌 Dynamic Socket.IO server created on port ${socketInfo.socket_port}`);
       console.log(`⌨️ Keyboard monitoring enabled`);
+      console.log(`🖱️ Mouse monitoring enabled with 2-second interval`);
+      console.log(`🖥️ Fullscreen mode enabled for exam`);
       
       res.status(200).json({
         message: "Monitoring started successfully",
@@ -2433,12 +2455,16 @@ const startMonitoring = async (req, res) => {
             'browser_validation',
             'exam_ready',
             'security_heartbeat',
-            'keyboard_data' // Add keyboard_data as a required event
+            'keyboard_data',
+            'mouse_data',
+            'fullscreen_status'
           ]
         },
         // Monitoring scripts to execute on client
         scripts: {
-          keyboardMonitoring: keyboardMonitoringScript
+          keyboardMonitoring: keyboardMonitoringScript,
+          mouseMonitoring: mouseMonitoringScript,
+          fullscreenManager: fullscreenManagerScript
         }
       });
       

@@ -5,13 +5,15 @@ const attendanceUtils = require('../utils/attendanceUtils'); // Import attendanc
 
 const createExam = async (req, res) => {
   try {
-    const { title, description, duration } = req.body;
+    const { title, description, duration, maxAttempts, passingScore } = req.body;
 
     // Create the exam
     const newExam = new Exam({
       title,
       description,
       duration,
+      maxAttempts: maxAttempts || 3, // Default to 3 if not provided
+      passingScore: passingScore || 60, // Default to 60% if not provided
       sections: {
         mcqs: [],
         shortAnswers: [],
@@ -39,7 +41,6 @@ const getAllExams = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts per exam (increased from 2 to 5)
     
     // Build the query
     let filter = {};
@@ -63,7 +64,7 @@ const getAllExams = async (req, res) => {
     // Find all exams matching the filter (before pagination)
     // We need this to apply user-specific filtering afterward
     const allFilteredExams = await Exam.find(filter)
-      .select('title description duration sections.mcqs createdBy status publishedAt')
+      .select('title description duration sections.mcqs createdBy status publishedAt maxAttempts passingScore')
       .sort({ publishedAt: -1 });
     
     // Get user's attempts for each exam to check status
@@ -87,11 +88,13 @@ const getAllExams = async (req, res) => {
     const availableExams = allFilteredExams.filter(exam => {
       const examId = exam._id.toString();
       const attempts = examAttemptsMap[examId] || [];
+      const maxAttempts = exam.maxAttempts || 3; // Get max attempts from exam model or default
+      const passingScore = exam.passingScore || 60; // Get passing score from exam model or default
       
       // If no attempts, keep the exam
       if (attempts.length === 0) return true;
       
-      // Check for passed attempts (score >= 60%)
+      // Check for passed attempts (score >= passing score)
       let hasPassed = false;
       let attemptCount = 0;
       
@@ -99,14 +102,14 @@ const getAllExams = async (req, res) => {
         if (attempt.status === "COMPLETED" || attempt.status === "TIMED_OUT") {
           attemptCount++;
           const percentage = (attempt.score / attempt.totalQuestions) * 100;
-          if (percentage >= 60) {
+          if (percentage >= passingScore) {
             hasPassed = true;
           }
         }
       });
       
       // Remove exam if user has passed it or reached max attempts
-      return !(hasPassed || attemptCount >= MAX_ATTEMPTS);
+      return !(hasPassed || attemptCount >= maxAttempts);
     });
     
     // Apply pagination after filtering
@@ -117,6 +120,8 @@ const getAllExams = async (req, res) => {
     const examsList = paginatedExams.map(exam => {
       const examId = exam._id.toString();
       const attempts = examAttemptsMap[examId] || [];
+      const maxAttempts = exam.maxAttempts || 3; // Get max attempts from exam model or default
+      const passingScore = exam.passingScore || 60; // Get passing score from exam model or default
       
       // Check for in-progress attempts and attempt count
       let inProgress = false;
@@ -156,14 +161,16 @@ const getAllExams = async (req, res) => {
         questionCount: totalQuestions, // Keep for backward compatibility
         attempts: attempts.length,
         publishedAt: exam.publishedAt,
+        maxAttempts: maxAttempts,
+        passingScore: passingScore,
         // User's attempt status for this exam
         userStatus: {
           inProgress,
           bestScore,
           bestPercentage: bestPercentage.toFixed(1),
           attemptCount,
-          canAttempt: attemptCount < MAX_ATTEMPTS,
-          remainingAttempts: Math.max(0, MAX_ATTEMPTS - attemptCount)
+          canAttempt: attemptCount < maxAttempts,
+          remainingAttempts: Math.max(0, maxAttempts - attemptCount)
         }
       };
     });
@@ -263,7 +270,7 @@ const deleteExam = async (req, res) => {
 const updateExam = async (req, res) => {
   try {
     console.log(`Updating exam ${req.params.id} by user ${req.user._id} with role ${req.user.role}`);
-    const { title, description, duration, sections } = req.body;
+    const { title, description, duration, sections, maxAttempts, passingScore } = req.body;
     const examId = req.params.id;
     
     // Get the current exam
@@ -298,7 +305,20 @@ const updateExam = async (req, res) => {
     }
     
     // Prepare update data
-    let updateData = { title, description, duration };
+    let updateData = { 
+      title, 
+      description, 
+      duration
+    };
+    
+    // Add maxAttempts and passingScore to update data if provided
+    if (maxAttempts !== undefined) {
+      updateData.maxAttempts = maxAttempts;
+    }
+    
+    if (passingScore !== undefined) {
+      updateData.passingScore = passingScore;
+    }
     
     // Handle sections update based on exam status and attempts
     if (hasAttempts) {

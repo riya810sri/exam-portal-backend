@@ -11,7 +11,7 @@ A comprehensive backend system for managing online exams, assessments, and certi
 - Real-time exam monitoring and timing
 - Automatic grading and result calculation
 - Certificate generation for successful candidates
-- **Cheating Detection** - with keyboard monitoring and pattern analysis!
+- **Advanced Cheating Detection** - with keyboard, keybinding, and mouse monitoring!
 
 ## Getting Started
 
@@ -58,30 +58,50 @@ The Exam Portal now includes a robust cheating detection system that monitors an
 ### Features
 
 - Client-side detection of tab switching, copy/paste attempts, and keyboard shortcuts
-- **Advanced keyboard monitoring** to detect automated tools and suspicious typing patterns
+- **Advanced keyboard and keybinding monitoring** to detect:
+  - Automated tools and suspicious typing patterns
+  - Prohibited keyboard shortcuts (Ctrl+C, Ctrl+V, F12, Alt+Tab, etc.)
+  - Custom keybinding combinations that may indicate cheating attempts
+- **Mouse movement monitoring** with data collection every 2 seconds to detect:
+  - Automated mouse movements
+  - Unusually consistent or straight-line movements
+  - Patterns that indicate automation tools
+- Real-time alerts for prohibited actions and suspicious patterns
 - Secure API for reporting and storing cheating evidence
 - Admin dashboard for reviewing flagged exams
 - Flexible evidence schema to support different detection methods
 - Support for both client and server-side detection
 
-### Keyboard Monitoring
+### Input Monitoring System
 
-The new keyboard monitoring feature provides:
+The enhanced input monitoring features provide:
 
-- Real-time tracking of keystroke patterns
-- Detection of suspicious typing rhythms that may indicate automation
-- Analysis of keyboard shortcut usage
-- Risk scoring based on typing behavior
-- Integration with the existing security monitoring system
+- **Keyboard Monitoring:**
+  - Real-time tracking of keystroke patterns and timing
+  - Detection of suspicious typing rhythms that may indicate automation
+  - Comprehensive monitoring of keyboard shortcuts and combinations
+  - Identification of attempts to use browser developer tools or switch applications
 
-For integration details, see the [Keyboard Monitoring Integration Guide](docs/KEYBOARD_MONITORING_INTEGRATION.md).
+- **Mouse Monitoring:**
+  - Collection of mouse position data every 2 seconds
+  - Analysis of mouse movement patterns for unnatural behavior
+  - Detection of straight-line movements indicative of automation
+  - Tracking of periods with no mouse activity
+
+- **Integrated Risk Assessment:**
+  - Risk scoring based on typing behavior, detected shortcuts, and mouse patterns
+  - Integration with the existing security monitoring system
+  - Configurable alerts and warnings for students
+  - Comprehensive admin dashboard for monitoring violations
+
+For integration details, see the [Keyboard, Keybinding & Mouse Monitoring Integration Guide](docs/KEYBOARD_MONITORING_INTEGRATION.md).
 
 ### Integration
 
 To integrate cheating detection in your frontend, use the example components provided in the `/examples` directory:
 
 - `client-side-detection.js` - React hook for monitoring exam takers
-- `admin-cheating-dashboard.js` - Admin component for reviewing reports
+- `admin-keybinding-dashboard.js` - Admin component for reviewing reports
 
 For detailed documentation, see the [Cheating Detection Documentation](docs/cheating-detection.md).
 

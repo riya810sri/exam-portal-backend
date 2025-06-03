@@ -5,8 +5,9 @@
  * functionality in a React/Next.js frontend application.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
 
@@ -231,6 +232,238 @@ export function useCheatingDetection(examId, token) {
     tabSwitchCount: tabSwitchCount.current
   };
 }
+
+/**
+ * React hook for keyboard and keybinding monitoring in exams
+ * @param {Object} options - Configuration options
+ * @param {string} options.examId - The ID of the current exam
+ * @param {string} options.sessionToken - Authentication token
+ * @param {Function} options.onWarning - Callback when a warning is received
+ * @param {Function} options.onError - Callback when an error occurs
+ * @returns {Object} Monitoring state and controls
+ */
+export const useExamMonitoring = ({ 
+  examId, 
+  sessionToken, 
+  onWarning = () => {}, 
+  onError = () => {} 
+}) => {
+  const [monitoringActive, setMonitoringActive] = useState(false);
+  const [socket, setSocket] = useState(null);
+  const [warnings, setWarnings] = useState([]);
+  const [status, setStatus] = useState('idle'); // idle, connecting, active, error
+  const [error, setError] = useState(null);
+
+  // Start monitoring
+  const startMonitoring = useCallback(async () => {
+    if (status === 'connecting' || status === 'active') return;
+
+    try {
+      setStatus('connecting');
+      setError(null);
+
+      const response = await fetch(`/api/exam-attendance/${examId}/start-monitoring`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to start monitoring');
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        // Initialize socket connection
+        const socketInstance = initializeSocketConnection(data.socket);
+        setSocket(socketInstance);
+        
+        // Execute monitoring scripts
+        if (data.scripts) {
+          executeMonitoringScripts(data.scripts);
+        }
+        
+        setMonitoringActive(true);
+        setStatus('active');
+      } else {
+        throw new Error(data.message || 'Monitoring initialization failed');
+      }
+    } catch (error) {
+      console.error('Error starting exam monitoring:', error);
+      setError(error.message || 'Failed to start monitoring');
+      setStatus('error');
+      onError(error);
+    }
+  }, [examId, sessionToken, status, onError, initializeSocketConnection, executeMonitoringScripts]);
+
+  // Stop monitoring
+  const stopMonitoring = useCallback(() => {
+    if (socket) {
+      socket.disconnect();
+      setSocket(null);
+    }
+    
+    setMonitoringActive(false);
+    setStatus('idle');
+    
+    // Remove global socket reference
+    if (window.socket) {
+      window.socket = null;
+    }
+  }, [socket]);
+
+  // Initialize socket connection
+  const initializeSocketConnection = useCallback((socketConfig) => {
+    if (!socketConfig || !socketConfig.port || !socketConfig.monit_id) {
+      console.error('Invalid socket configuration');
+      return null;
+    }
+    
+    // Create socket connection
+    const socketUrl = socketConfig.url || `http://localhost:${socketConfig.port}`;
+    const socketInstance = io(socketUrl, {
+      transports: socketConfig.protocols || ['websocket', 'polling'],
+      query: {
+        monit_id: socketConfig.monit_id,
+        client_type: 'exam_client'
+      }
+    });
+    
+    // Store socket globally for the monitoring script to access
+    window.socket = socketInstance;
+    
+    // Set up event handlers
+    socketInstance.on('connect', () => {
+      console.log('Connected to monitoring server');
+      
+      // Send browser validation data
+      socketInstance.emit('browser_validation', {
+        userAgent: navigator.userAgent,
+        screen: {
+          width: window.screen.width,
+          height: window.screen.height
+        },
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timestamp: Date.now()
+      });
+    });
+    
+    socketInstance.on('disconnect', () => {
+      console.log('Disconnected from monitoring server');
+      setMonitoringActive(false);
+      setStatus('idle');
+    });
+    
+    socketInstance.on('error', (error) => {
+      console.error('Socket error:', error);
+      setError('Connection error: ' + (error.message || 'Unknown error'));
+      onError(error);
+    });
+    
+    // Handle security warnings
+    socketInstance.on('security_warning', (warning) => {
+      console.warn('Security warning received:', warning);
+      
+      // Add to warnings list
+      const newWarning = {
+        ...warning,
+        id: Date.now(),
+        received: new Date()
+      };
+      
+      setWarnings(prev => [...prev, newWarning]);
+      onWarning(newWarning);
+    });
+    
+    // Start sending heartbeats
+    const heartbeatInterval = setInterval(() => {
+      if (socketInstance.connected) {
+        socketInstance.emit('security_heartbeat', { timestamp: Date.now() });
+      }
+    }, 10000);
+    
+    // Clear interval when socket disconnects
+    socketInstance.on('disconnect', () => {
+      clearInterval(heartbeatInterval);
+    });
+    
+    return socketInstance;
+  }, [onWarning, onError]);
+
+  // Execute keyboard monitoring script
+  const executeMonitoringScript = useCallback((scriptCode) => {
+    try {
+      // Create a new script element
+      const scriptElement = document.createElement('script');
+      scriptElement.textContent = scriptCode;
+      document.head.appendChild(scriptElement);
+      
+      console.log('Keyboard and keybinding monitoring initialized');
+    } catch (error) {
+      console.error('Failed to initialize keyboard monitoring:', error);
+      setError('Script initialization failed: ' + (error.message || 'Unknown error'));
+      onError(error);
+    }
+  }, [onError]);
+
+  // Updated to handle both keyboard and mouse monitoring scripts
+  const executeMonitoringScripts = useCallback((scripts) => {
+    try {
+      if (scripts.keyboardMonitoring) {
+        const kbScript = document.createElement('script');
+        kbScript.textContent = scripts.keyboardMonitoring;
+        kbScript.id = 'keyboard-monitoring-script';
+        document.head.appendChild(kbScript);
+        console.log('Keyboard monitoring initialized');
+      }
+      
+      if (scripts.mouseMonitoring) {
+        const mouseScript = document.createElement('script');
+        mouseScript.textContent = scripts.mouseMonitoring;
+        mouseScript.id = 'mouse-monitoring-script';
+        document.head.appendChild(mouseScript);
+        console.log('Mouse monitoring initialized with 2-second interval');
+      }
+    } catch (error) {
+      console.error('Failed to initialize monitoring scripts:', error);
+      setError('Script initialization failed: ' + (error.message || 'Unknown error'));
+      onError(error);
+    }
+  }, [onError]);
+
+  // Clear warnings
+  const clearWarnings = useCallback(() => {
+    setWarnings([]);
+  }, []);
+
+  // Enable debug mode
+  const enableDebugMode = useCallback(() => {
+    window.KEYBOARD_MONITORING_DEBUG = true;
+    console.log('Keyboard monitoring debug mode enabled');
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopMonitoring();
+    };
+  }, [stopMonitoring]);
+
+  return {
+    status,
+    isActive: monitoringActive,
+    warnings,
+    error,
+    start: startMonitoring,
+    stop: stopMonitoring,
+    clearWarnings,
+    enableDebugMode
+  };
+};
 
 /**
  * Example component showing integration of cheating detection

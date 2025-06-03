@@ -69,7 +69,7 @@ const sendOTPEmail = async (email, otp, name) => {
 
     // Send the email using the shared transporter
     let info = await transporter.sendMail(mailOptions);
-    console.log(`✓ OTP email sent to ${email}: ${info.messageId}`);
+    console.log(`✓ OTP ${otp} email sent to ${email}: ${info.messageId}`);
     
     // Return the info object from nodemailer
     return info;
