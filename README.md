@@ -11,7 +11,7 @@ A comprehensive backend system for managing online exams, assessments, and certi
 - Real-time exam monitoring and timing
 - Automatic grading and result calculation
 - Certificate generation for successful candidates
-- **Cheating Detection** - NEW! 
+- **Cheating Detection** - with keyboard monitoring and pattern analysis!
 
 ## Getting Started
 
@@ -58,10 +58,23 @@ The Exam Portal now includes a robust cheating detection system that monitors an
 ### Features
 
 - Client-side detection of tab switching, copy/paste attempts, and keyboard shortcuts
+- **Advanced keyboard monitoring** to detect automated tools and suspicious typing patterns
 - Secure API for reporting and storing cheating evidence
 - Admin dashboard for reviewing flagged exams
 - Flexible evidence schema to support different detection methods
 - Support for both client and server-side detection
+
+### Keyboard Monitoring
+
+The new keyboard monitoring feature provides:
+
+- Real-time tracking of keystroke patterns
+- Detection of suspicious typing rhythms that may indicate automation
+- Analysis of keyboard shortcut usage
+- Risk scoring based on typing behavior
+- Integration with the existing security monitoring system
+
+For integration details, see the [Keyboard Monitoring Integration Guide](docs/KEYBOARD_MONITORING_INTEGRATION.md).
 
 ### Integration
 

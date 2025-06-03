@@ -2333,6 +2333,9 @@ const startMonitoring = async (req, res) => {
     const { examId } = req.params;
     const userId = req.user._id;
     
+    // Import keyboard monitoring utility
+    const { generateKeyboardMonitoringScript } = require('../utils/keyboardMonitoring');
+    
     // Check student restrictions first
     const StudentRestrictionManager = require('../utils/studentRestrictionManager');
     const studentRestrictionManager = new StudentRestrictionManager();
@@ -2399,11 +2402,15 @@ const startMonitoring = async (req, res) => {
         userId.toString()
       );
       
+      // Generate keyboard monitoring script
+      const keyboardMonitoringScript = generateKeyboardMonitoringScript();
+      
       // Return appropriate risk level with socket connection details
       const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
       
       console.log(`✅ Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
       console.log(`🔌 Dynamic Socket.IO server created on port ${socketInfo.socket_port}`);
+      console.log(`⌨️ Keyboard monitoring enabled`);
       
       res.status(200).json({
         message: "Monitoring started successfully",
@@ -2425,8 +2432,13 @@ const startMonitoring = async (req, res) => {
           requiredEvents: [
             'browser_validation',
             'exam_ready',
-            'security_heartbeat'
+            'security_heartbeat',
+            'keyboard_data' // Add keyboard_data as a required event
           ]
+        },
+        // Monitoring scripts to execute on client
+        scripts: {
+          keyboardMonitoring: keyboardMonitoringScript
         }
       });
       

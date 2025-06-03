@@ -8,6 +8,8 @@ const socketIo = require('socket.io');
 const SecurityEvent = require('../models/securityEvent.model');
 const { socketAntiAbuseManager } = require('./socketAntiAbuse');
 const { StudentRestrictionManager } = require('./studentRestrictionManager');
+const { processKeyboardData } = require('./keyboardMonitoring');
+const ExamAttendance = require('../models/examAttendance.model');
 
 class DynamicSocketManager {
   constructor() {
@@ -151,6 +153,15 @@ class DynamicSocketManager {
         } catch (error) {
           console.error('Error processing security event:', error);
           socket.emit('error', { message: 'Failed to process security event' });
+        }
+      });
+
+      // Handle keyboard monitoring data
+      socket.on('keyboard_data', async (data) => {
+        try {
+          await this.processKeyboardData(data, monit_id, exam_id, student_id, socket);
+        } catch (error) {
+          console.error('Error processing keyboard data:', error);
         }
       });
 
@@ -574,6 +585,102 @@ class DynamicSocketManager {
         }
       }
     }, 60 * 1000); // Check every minute
+  }
+
+  /**
+   * Process keyboard monitoring data
+   */
+  async processKeyboardData(data, monit_id, exam_id, student_id, socket) {
+    if (!data || !data.events || !Array.isArray(data.events)) {
+      return;
+    }
+
+    try {
+      // Process and analyze keyboard data
+      const { processed, analysis } = processKeyboardData(data.events);
+      
+      // If risk score is high, log a security event
+      if (analysis.riskScore > 50) {
+        const securityEvent = new SecurityEvent({
+          monit_id,
+          exam_id,
+          student_id,
+          event_type: 'KEYBOARD_ANOMALY',
+          timestamp: new Date(),
+          details: {
+            riskScore: analysis.riskScore,
+            patterns: analysis.patterns,
+            anomalies: analysis.anomalies,
+            keyCount: analysis.keyCount
+          },
+          risk_score: analysis.riskScore,
+          is_suspicious: true,
+          user_agent: socket.handshake.headers['user-agent'],
+          ip_address: socket.handshake.address
+        });
+
+        await securityEvent.save();
+        
+        console.log(`⚠️ Keyboard anomaly detected for ${student_id} in exam ${exam_id} (Risk: ${analysis.riskScore})`);
+        
+        // Emit to admin dashboard if global.io exists
+        if (global.io) {
+          global.io.to('admin-dashboard').emit('security_alert', {
+            monit_id,
+            exam_id,
+            student_id,
+            event_type: 'KEYBOARD_ANOMALY',
+            risk_score: analysis.riskScore,
+            timestamp: new Date()
+          });
+        }
+      }
+      
+      // Update the exam attendance record with keyboard behavior data
+      const attendance = await ExamAttendance.findOne({
+        examId: exam_id,
+        userId: student_id,
+        status: "IN_PROGRESS"
+      });
+      
+      if (attendance) {
+        // Initialize behaviorProfile if it doesn't exist
+        if (!attendance.behaviorProfile) {
+          attendance.behaviorProfile = {};
+        }
+        
+        // Update keyboard-related behavior data
+        attendance.behaviorProfile.keystrokePattern = processed.map(event => event.timeDiff || 0);
+        attendance.behaviorProfile.avgKeyboardInterval = analysis.meanInterval;
+        
+        // Update automation risk if it's higher than the current value
+        if (!attendance.behaviorProfile.automationRisk || 
+            analysis.riskScore > attendance.behaviorProfile.automationRisk) {
+          attendance.behaviorProfile.automationRisk = analysis.riskScore;
+        }
+        
+        // Update risk assessment if needed
+        if (analysis.riskScore > 70 && attendance.riskAssessment) {
+          // Add keyboard monitoring as a risk factor
+          attendance.riskAssessment.riskFactors.push({
+            factor: 'KEYBOARD_PATTERN',
+            score: analysis.riskScore,
+            description: 'Suspicious keyboard activity detected',
+            timestamp: new Date()
+          });
+          
+          // Recalculate overall risk score
+          const riskFactors = attendance.riskAssessment.riskFactors;
+          const totalRisk = riskFactors.reduce((sum, factor) => sum + factor.score, 0);
+          attendance.riskAssessment.overallRiskScore = Math.min(100, totalRisk / riskFactors.length);
+          attendance.riskAssessment.lastUpdated = new Date();
+        }
+        
+        await attendance.save();
+      }
+    } catch (error) {
+      console.error('Error processing keyboard data:', error);
+    }
   }
 }
 
