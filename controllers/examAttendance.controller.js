@@ -172,6 +172,8 @@ const attendExam = async (req, res) => {
     // Get real attempt count and fix inconsistencies
     const realAttemptCount = await getRealAttemptCount(examId, userId);
     
+    let attendance;
+    
     // Check for existing in-progress attempts that need to be canceled when starting a new attempt
     if (newAttempt === 'true') {
       console.log(`Creating new attempt (attempt #${realAttemptCount + 1}) as requested`);
@@ -221,10 +223,11 @@ const attendExam = async (req, res) => {
           userId,
           totalQuestions: exam.sections.mcqs.length,
           startTime: new Date(),
-          status: "IN_PROGRESS",
+          status: "IN_PROGRESS", // Explicitly set status to IN_PROGRESS
           attemptNumber: confirmedAttemptNumber
         });
         
+        // Save the attendance record immediately to ensure status is IN_PROGRESS
         await attendance.save();
         console.log(`New attendance record created with ID: ${attendance._id} and attempt #${confirmedAttemptNumber}`);
         
@@ -327,12 +330,17 @@ const attendExam = async (req, res) => {
             userId,
             totalQuestions: exam.sections.mcqs.length,
             startTime: new Date(),
-            status: "IN_PROGRESS",
+            status: "IN_PROGRESS", // Explicitly set status to IN_PROGRESS
             attemptNumber: attemptNumber
           });
           
+          // Save the attendance record immediately to ensure status is IN_PROGRESS
           await attendance.save();
           console.log(`New first attendance record created with ID: ${attendance._id}`);
+          
+          // Verify the status was saved correctly
+          const savedAttendance = await ExamAttendance.findById(attendance._id);
+          console.log(`Verified attendance status: ${savedAttendance.status}`);
           
           // Randomize questions and store in memory
           const randomizedQuestions = shuffleArray(exam.sections.mcqs);
@@ -346,7 +354,7 @@ const attendExam = async (req, res) => {
             randomizedQuestions,
             userAnswers: {},
             attemptId: attendance._id,
-            attemptNumber: 1 // Store attempt number in memory
+            attemptNumber: attemptNumber // Store attempt number in memory
           };
           
           // Also store in the database for persistence
@@ -355,14 +363,14 @@ const attendExam = async (req, res) => {
             await TmpExamStudentData.deleteMany({ 
               userId, 
               examId, 
-              attemptNumber: 1 
+              attemptNumber: attemptNumber 
             });
             
             // Create new temporary data
             const tmpData = new TmpExamStudentData({
               userId,
               examId,
-              attemptNumber: 1,
+              attemptNumber: attemptNumber,
               questionIds: randomizedQuestions.map(q => q._id),
               answers: []
             });
@@ -393,6 +401,13 @@ const attendExam = async (req, res) => {
         }
       } else {
         console.log(`Found existing in-progress attempt: ${attendance._id}`);
+        
+        // Ensure the status is set to IN_PROGRESS
+        if (attendance.status !== "IN_PROGRESS") {
+          attendance.status = "IN_PROGRESS";
+          await attendance.save();
+          console.log(`Updated attendance status to IN_PROGRESS for ID: ${attendance._id}`);
+        }
         
         const attemptNumber = attendance.attemptNumber || 1;
         
@@ -473,6 +488,33 @@ const attendExam = async (req, res) => {
           
           console.log("Re-initialized question data in memory");
         }
+      }
+    }
+    
+    // Double-check that attendance exists and has IN_PROGRESS status
+    if (!attendance || attendance.status !== "IN_PROGRESS") {
+      console.log("Warning: Attendance record not found or not in progress");
+      
+      // Try to find or create a valid attendance record
+      if (!attendance) {
+        // Create a new attendance record if none exists
+        const attemptNumber = await attendanceUtils.getNextAttemptNumber(userId, examId);
+        attendance = new ExamAttendance({
+          examId,
+          userId,
+          totalQuestions: exam.sections.mcqs.length,
+          startTime: new Date(),
+          status: "IN_PROGRESS",
+          attemptNumber: attemptNumber
+        });
+        
+        await attendance.save();
+        console.log(`Created missing attendance record with ID: ${attendance._id}`);
+      } else if (attendance.status !== "IN_PROGRESS") {
+        // Update the status if it's not IN_PROGRESS
+        attendance.status = "IN_PROGRESS";
+        await attendance.save();
+        console.log(`Fixed attendance status to IN_PROGRESS for ID: ${attendance._id}`);
       }
     }
     
@@ -1046,7 +1088,10 @@ const getExamStatus = async (req, res) => {
     }).sort({ startTime: -1 });
     
     if (!attendance) {
-      return res.status(404).json({ message: "No exam session found" });
+      return res.status(404).json({ 
+        message: "No exam session found",
+        status: false // Explicitly return status: false when no attendance found
+      });
     }
 
     // Clean up any stale attendances for this user automatically
@@ -1076,13 +1121,17 @@ const getExamStatus = async (req, res) => {
     // For debugging purposes, log the actual status from the database
     console.log(`Exam status for user ${userId}, exam ${examId}: ${statusInfo.status}, attempts: ${statusInfo.totalAttempts}`);
 
+    // Ensure we return a boolean status flag for client compatibility
+    statusInfo.status = statusInfo.status === "IN_PROGRESS"; // Convert to boolean for backward compatibility
+
     res.status(200).json(statusInfo);
 
   } catch (error) {
     console.error("Error in getExamStatus:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      details: error.message 
+      details: error.message,
+      status: false // Ensure status is false on error
     });
   }
 };

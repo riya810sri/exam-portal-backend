@@ -4,6 +4,7 @@ const db = require('./config/db'); // Ensure this is the correct path to your db
 const config = require("./config/config");
 const net = require('net'); // Added for port checking
 const attendanceUtils = require('./utils/attendanceUtils'); // Import attendance utilities
+const { initCronJobs } = require('./utils/cronJobs'); // Import cron jobs
 
 // Import email utilities with error handling
 let emailUtils;
@@ -114,7 +115,12 @@ app.get("/live", (req, res) => {
   res.status(200).json({ message: "Server is live" });
 });
 
+// Initialize cron jobs
+initCronJobs();
+
 // Periodically clean up stale exam attendances (every 30 minutes)
+// This is now handled by the cron job in utils/cronJobs.js
+// Keeping this for backward compatibility
 setInterval(async () => {
   try {
     console.log("Running scheduled cleanup of stale exam attendances...");
@@ -163,6 +169,11 @@ async function startServer() {
         console.log(`   Origin: ${typeof config.cors.origin === 'object' ? JSON.stringify(config.cors.origin) : config.cors.origin}`);
         console.log(`   Methods: ${config.cors.methods.join(', ')}`);
         console.log(`   Headers: ${config.cors.allowedHeaders}`);
+        
+        // Log cron job status
+        console.log('⏰ Cron jobs initialized for scheduled tasks');
+        console.log('   - Daily abandoned exam cleanup at midnight IST');
+        console.log('   - Hourly stale attendance cleanup');
       });
       return; // Exit the function after successfully starting the server
     }

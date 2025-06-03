@@ -4,7 +4,7 @@
   "main": "app.js",
   "scripts": {
     "start": "nodemon app",
-    "dev": "node app",
+    "dev": "nodemon app",
     "test": "node tests/comprehensive-antiabuse.test.js",
     "verify": "node verify-antiabuse.js",
     "debug-imports": "node debug_imports.js",
@@ -12,7 +12,8 @@
     "test:unit": "node verify-antiabuse.js",
     "setup:db": "node scripts/database-indexes.js create",
     "prod:check": "node scripts/production-readiness.js",
-    "docs": "echo \"Documentation available in docs/ directory\""
+    "docs": "echo \"Documentation available in docs/ directory\"",
+    "test:abandoned-exams": "node scripts/test-abandoned-exams.js"
   },
   "keywords": [],
   "author": "",
@@ -35,6 +36,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
+    "node-cron": "^3.0.3",
     "nodemailer": "^6.10.0",
     "pdfkit": "^0.17.0",
     "socket.io": "^4.8.1",

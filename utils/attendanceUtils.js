@@ -47,6 +47,51 @@ async function cleanupStaleAttendances(hoursThreshold = 6) {
 }
 
 /**
+ * Handle abandoned exams at the end of the day
+ * This function is designed to be run daily at midnight IST
+ * It will mark all in-progress exams that haven't been updated in the last 3 hours as TIMED_OUT
+ * @returns {Promise<{updated: number, errors: number}>} Number of records updated and errors
+ */
+async function handleAbandonedExams() {
+  try {
+    console.log('Running daily abandoned exam cleanup...');
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    
+    // Find all in-progress exams that haven't been updated in the last 3 hours
+    const abandonedExams = await ExamAttendance.find({
+      status: 'IN_PROGRESS',
+      lastUpdated: { $lt: threeHoursAgo }
+    });
+    
+    console.log(`Found ${abandonedExams.length} abandoned exams to process`);
+    
+    let updatedCount = 0;
+    let errorCount = 0;
+    
+    // Process each abandoned exam
+    for (const exam of abandonedExams) {
+      try {
+        exam.status = 'TIMED_OUT';
+        exam.endTime = new Date();
+        await exam.save();
+        updatedCount++;
+        
+        console.log(`Marked exam ${exam._id} as TIMED_OUT (User: ${exam.userId}, Exam: ${exam.examId})`);
+      } catch (error) {
+        console.error(`Error updating abandoned exam ${exam._id}:`, error);
+        errorCount++;
+      }
+    }
+    
+    console.log(`Abandoned exam cleanup complete. Updated: ${updatedCount}, Errors: ${errorCount}`);
+    return { updated: updatedCount, errors: errorCount };
+  } catch (error) {
+    console.error('Error handling abandoned exams:', error);
+    return { updated: 0, errors: 1 };
+  }
+}
+
+/**
  * Fix inconsistent attempt numbers for a user-exam combination
  * @param {string} userId - User ID
  * @param {string} examId - Exam ID
@@ -145,9 +190,12 @@ function getDetailedStatus(attendance, userExamData = null) {
   const isInProgress = statusValue === 'IN_PROGRESS' || 
                       (!attendance.endTime && statusValue !== 'COMPLETED' && statusValue !== 'TIMED_OUT');
   
+  // Ensure we always have a valid status value
+  const finalStatus = isInProgress ? 'IN_PROGRESS' : statusValue;
+  
   return {
-    status: statusValue,
-    statusDisplay: getStatusDisplay(statusValue),
+    status: finalStatus,
+    statusDisplay: getStatusDisplay(finalStatus),
     score: isInProgress ? null : attendance.score,
     totalQuestions: attendance.totalQuestions,
     attemptedQuestions: isInProgress ? answeredCount : attendance.attemptedQuestions,
@@ -155,8 +203,8 @@ function getDetailedStatus(attendance, userExamData = null) {
     endTime: attendance.endTime,
     attemptNumber: attendance.attemptNumber || 1,
     inProgress: isInProgress,
-    completed: statusValue === 'COMPLETED',
-    timedOut: statusValue === 'TIMED_OUT'
+    completed: finalStatus === 'COMPLETED',
+    timedOut: finalStatus === 'TIMED_OUT'
   };
 }
 
@@ -165,5 +213,6 @@ module.exports = {
   cleanupStaleAttendances,
   fixAttemptNumbers,
   getNextAttemptNumber,
-  getDetailedStatus
+  getDetailedStatus,
+  handleAbandonedExams
 };
