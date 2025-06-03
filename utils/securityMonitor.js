@@ -251,7 +251,67 @@ class ExamSecurityMonitor extends EventEmitter {
         0.5 + (attendance.riskAssessment.violationCount * 0.1)
       );
 
-      await attendance.save();
+      // Retry logic to handle concurrent updates
+      const maxRetries = 3;
+      let retryCount = 0;
+      
+      while (retryCount < maxRetries) {
+        try {
+          await attendance.save();
+          break; // Success, exit retry loop
+          
+        } catch (error) {
+          retryCount++;
+          
+          if (error.name === 'VersionError' && retryCount < maxRetries) {
+            // Wait briefly before retrying to reduce collision probability
+            console.log(`VersionError in securityMonitor, retrying... (${retryCount}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+            
+            // Refresh the document to get latest version
+            const freshAttendance = await ExamAttendance.findById(attendance._id);
+            if (freshAttendance) {
+              // Re-apply our risk assessment updates to the fresh document
+              if (!freshAttendance.riskAssessment) {
+                freshAttendance.riskAssessment = {
+                  overallRiskScore: 0,
+                  riskFactors: [],
+                  lastUpdated: new Date(),
+                  violationCount: 0,
+                  confidence: 0
+                };
+              }
+              
+              // Add the new risk factor if it's not already there
+              const existingFactor = freshAttendance.riskAssessment.riskFactors.find(
+                f => f.type === riskFactor.type && 
+                     Math.abs(new Date(f.timestamp) - riskFactor.timestamp) < 1000
+              );
+              
+              if (!existingFactor) {
+                freshAttendance.riskAssessment.riskFactors.push(riskFactor);
+                freshAttendance.riskAssessment.violationCount++;
+              }
+              
+              freshAttendance.riskAssessment.lastUpdated = new Date();
+              freshAttendance.riskAssessment.overallRiskScore = this.calculateOverallRiskScore(
+                freshAttendance.riskAssessment.riskFactors
+              );
+              freshAttendance.riskAssessment.confidence = Math.min(
+                0.95,
+                0.5 + (freshAttendance.riskAssessment.violationCount * 0.1)
+              );
+              
+              attendance = freshAttendance; // Use the fresh document for next retry
+            }
+            continue;
+          }
+          
+          // If it's not a version error or we've exhausted retries, re-throw
+          console.error(`Error saving risk assessment after ${retryCount} retries:`, error);
+          throw error;
+        }
+      }
 
       // Debug log: Assessment complete
       console.log('DEBUG [RiskAssessment] Complete:', {
@@ -491,13 +551,44 @@ class ExamSecurityMonitor extends EventEmitter {
     console.error(`AUTO SUSPEND: User ${userId}, Exam ${examId}, Risk: ${riskLevel.score}%`);
     
     try {
-      // Suspend the exam session
-      attendance.status = 'SUSPENDED';
-      attendance.endTime = new Date();
-      attendance.suspensionReason = `Automatic suspension due to high risk score: ${riskLevel.score}%`;
-      attendance.flaggedForReview = true;
+      // Suspend the exam session with retry logic
+      const maxRetries = 3;
+      let retryCount = 0;
       
-      await attendance.save();
+      while (retryCount < maxRetries) {
+        try {
+          // Refresh the document to get latest version
+          const latestAttendance = await ExamAttendance.findById(attendance._id);
+          if (!latestAttendance) {
+            throw new Error('Attendance record not found during suspension');
+          }
+          
+          // Update suspension fields
+          latestAttendance.status = 'SUSPENDED';
+          latestAttendance.endTime = new Date();
+          latestAttendance.suspensionReason = `Automatic suspension due to high risk score: ${riskLevel.score}%`;
+          latestAttendance.flaggedForReview = true;
+          
+          await latestAttendance.save();
+          
+          // Update the attendance reference for subsequent operations
+          attendance = latestAttendance;
+          break; // Success, exit retry loop
+          
+        } catch (error) {
+          retryCount++;
+          
+          if (error.name === 'VersionError' && retryCount < maxRetries) {
+            console.log(`VersionError in autoSuspend, retrying... (${retryCount}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+            continue;
+          }
+          
+          // If it's not a version error or we've exhausted retries, re-throw
+          console.error(`Error suspending session after ${retryCount} retries:`, error);
+          throw error;
+        }
+      }
       
       // WebSocket: Immediate notification to admins
       this.broadcastToAdmins('session_suspended', {

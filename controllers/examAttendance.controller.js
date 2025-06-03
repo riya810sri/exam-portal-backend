@@ -785,10 +785,40 @@ const submitAnswer = async (req, res) => {
       // Continue anyway as we have the answer in memory
     }
 
-    // Update attendance
-    attendance.attemptedQuestions = Object.keys(userExamData[userId][examId].userAnswers).length;
-    attendance.lastUpdated = new Date();
-    await attendance.save();
+    // Update attendance with retry logic to handle concurrent updates
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Refresh the document to get latest version
+        const latestAttendance = await ExamAttendance.findById(attendance._id);
+        if (!latestAttendance) {
+          throw new Error('Attendance record not found during update');
+        }
+        
+        // Update only the fields we need to change
+        latestAttendance.attemptedQuestions = Object.keys(userExamData[userId][examId].userAnswers).length;
+        latestAttendance.lastUpdated = new Date();
+        
+        await latestAttendance.save();
+        break; // Success, exit retry loop
+        
+      } catch (error) {
+        retryCount++;
+        
+        if (error.name === 'VersionError' && retryCount < maxRetries) {
+          // Wait briefly before retrying to reduce collision probability
+          console.log(`VersionError in submitAnswer, retrying... (${retryCount}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+          continue;
+        }
+        
+        // If it's not a version error or we've exhausted retries, re-throw
+        console.error(`Error updating attendance after ${retryCount} retries:`, error);
+        throw error;
+      }
+    }
 
     res.status(200).json({ 
       message: "Answer submitted successfully",

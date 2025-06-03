@@ -56,8 +56,8 @@ async function fixAttemptNumbers(userId, examId) {
   try {
     // Get all records for this user and exam, sorted by start time
     const records = await ExamAttendance.find({
-      userId: mongoose.Types.ObjectId(userId),
-      examId: mongoose.Types.ObjectId(examId)
+      userId: new mongoose.Types.ObjectId(userId),
+      examId: new mongoose.Types.ObjectId(examId)
     }).sort({ startTime: 1 });
     
     // If no records found, return 0

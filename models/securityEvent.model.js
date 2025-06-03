@@ -117,7 +117,7 @@ securityEventSchema.statics.getSuspiciousEvents = function(exam_id, student_id) 
 
 securityEventSchema.statics.getEventStats = function(exam_id) {
   return this.aggregate([
-    { $match: { exam_id: mongoose.Types.ObjectId(exam_id) } },
+    { $match: { exam_id: new mongoose.Types.ObjectId(exam_id) } },
     { 
       $group: {
         _id: '$event_type',
