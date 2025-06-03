@@ -24,7 +24,12 @@ const {
 
 // Middleware to ensure admin access
 const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+  // Check both role field and isAdmin flag for compatibility
+  const isAdmin = req.user.role === 'admin' || 
+                 req.user.role === 'super_admin' || 
+                 req.user.isAdmin === true;
+  
+  if (!isAdmin) {
     return res.status(403).json({
       success: false,
       message: 'Admin access required'

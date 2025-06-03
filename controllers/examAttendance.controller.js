@@ -2297,7 +2297,7 @@ const getCheatingReports = async (req, res) => {
   }
 };
 
-// Start monitoring for cheating detection
+// Start monitoring for cheating detection with dynamic Socket.IO server
 const startMonitoring = async (req, res) => {
   try {
     const { examId } = req.params;
@@ -2336,18 +2336,66 @@ const startMonitoring = async (req, res) => {
     attendance.monitoringStartTime = new Date();
     await attendance.save();
     
-    // Return appropriate risk level
-    const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
+    // Create dynamic Socket.IO server for this monitoring session
+    const { DynamicSocketManager } = require('../utils/dynamicSocketManager');
+    const socketManager = DynamicSocketManager.getInstance();
     
-    console.log(`Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
+    const monit_id = `${userId}_${examId}_${Date.now()}`;
     
-    res.status(200).json({
-      message: "Monitoring started successfully",
-      success: true,
-      monitoringId: attendance._id,
-      riskLevel,
-      status: 'MONITORING_ACTIVE'
-    });
+    try {
+      const socketInfo = await socketManager.createMonitoringServer(
+        monit_id, 
+        examId, 
+        userId.toString()
+      );
+      
+      // Return appropriate risk level with socket connection details
+      const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
+      
+      console.log(`✅ Monitoring started for user ${userId}, exam ${examId}, risk level: ${riskLevel}`);
+      console.log(`🔌 Dynamic Socket.IO server created on port ${socketInfo.socket_port}`);
+      
+      res.status(200).json({
+        message: "Monitoring started successfully",
+        success: true,
+        monitoringId: attendance._id,
+        riskLevel,
+        status: 'MONITORING_ACTIVE',
+        // Dynamic Socket.IO connection details
+        socket: {
+          port: socketInfo.socket_port,
+          url: socketInfo.server_url,
+          monit_id: socketInfo.monit_id,
+          protocols: ['websocket', 'polling']
+        },
+        // Browser validation requirements
+        validation: {
+          requireBrowserValidation: true,
+          maxConnectionTime: 300000, // 5 minutes timeout
+          requiredEvents: [
+            'browser_validation',
+            'exam_ready',
+            'security_heartbeat'
+          ]
+        }
+      });
+      
+    } catch (socketError) {
+      console.error('Failed to create monitoring socket server:', socketError);
+      
+      // Fallback to basic monitoring without dynamic socket
+      const riskLevel = isHighRisk ? 'HIGH' : (attendance.riskAssessment.violationCount > 0 ? 'MEDIUM' : 'LOW');
+      
+      res.status(200).json({
+        message: "Monitoring started successfully (fallback mode)",
+        success: true,
+        monitoringId: attendance._id,
+        riskLevel,
+        status: 'MONITORING_ACTIVE',
+        socket: null,
+        fallbackMode: true
+      });
+    }
     
   } catch (error) {
     console.error("Error in startMonitoring:", error);

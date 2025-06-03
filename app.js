@@ -33,6 +33,7 @@ const roleRoutes = require("./routes/role.routes");
 const certificateRoutes = require("./routes/certificate.routes");
 const examAttendanceRoutes = require("./routes/examAttendance.routes");
 const adminAntiAbuseRoutes = require("./routes/admin.antiAbuse.routes");
+const adminSecurityDashboardRoutes = require("./routes/admin.securityDashboard.routes");
 
 const app = express();
 const server = http.createServer(app);
@@ -109,6 +110,7 @@ app.use("/api/roles", roleRoutes);
 app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
 app.use('/api/admin/security', adminAntiAbuseRoutes);
+app.use('/api/admin/security-dashboard', adminSecurityDashboardRoutes);
 
 // WebSocket connection handling
 io.on('connection', (socket) => {
