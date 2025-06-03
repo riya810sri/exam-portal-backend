@@ -74,6 +74,8 @@ const getAllExams = async (req, res) => {
       examId: { $in: examIds }
     }).select('examId status score totalQuestions attemptNumber');
     
+    console.log(`Found ${userAttempts.length} attempts for user ${userId} across ${examIds.length} exams`);
+    
     // Group attempts by exam ID
     const examAttemptsMap = {};
     userAttempts.forEach(attempt => {
@@ -84,6 +86,11 @@ const getAllExams = async (req, res) => {
       examAttemptsMap[examId].push(attempt);
     });
     
+    // Print attempts map for debugging
+    Object.keys(examAttemptsMap).forEach(examId => {
+      console.log(`Exam ${examId}: ${examAttemptsMap[examId].length} attempts`);
+    });
+    
     // Filter exams based on attempts - remove exams that user has passed or reached max attempts
     const availableExams = allFilteredExams.filter(exam => {
       const examId = exam._id.toString();
@@ -91,25 +98,36 @@ const getAllExams = async (req, res) => {
       const maxAttempts = exam.maxAttempts || 3; // Get max attempts from exam model or default
       const passingScore = exam.passingScore || 60; // Get passing score from exam model or default
       
+      console.log(`Filtering exam ${examId}: ${attempts.length} attempts found, max allowed: ${maxAttempts}`);
+      
       // If no attempts, keep the exam
-      if (attempts.length === 0) return true;
+      if (attempts.length === 0) {
+        console.log(`  No attempts for exam ${examId}, keeping it in the list`);
+        return true;
+      }
       
       // Check for passed attempts (score >= passing score)
       let hasPassed = false;
-      let attemptCount = 0;
+      let completedAttemptCount = 0;
       
       attempts.forEach(attempt => {
         if (attempt.status === "COMPLETED" || attempt.status === "TIMED_OUT") {
-          attemptCount++;
+          completedAttemptCount++;
           const percentage = (attempt.score / attempt.totalQuestions) * 100;
+          console.log(`  Completed attempt: ${percentage.toFixed(1)}%, passing score: ${passingScore}%`);
           if (percentage >= passingScore) {
             hasPassed = true;
+            console.log(`  User has passed this exam!`);
           }
         }
       });
       
+      // Keep the exam unless the user has passed it or reached max attempts
+      const shouldKeep = !(hasPassed || completedAttemptCount >= maxAttempts);
+      console.log(`  Decision for exam ${examId}: ${shouldKeep ? 'KEEP' : 'REMOVE'} (passed: ${hasPassed}, completed: ${completedAttemptCount}/${maxAttempts})`);
+      
       // Remove exam if user has passed it or reached max attempts
-      return !(hasPassed || attemptCount >= maxAttempts);
+      return shouldKeep;
     });
     
     // Apply pagination after filtering
@@ -123,6 +141,8 @@ const getAllExams = async (req, res) => {
       const maxAttempts = exam.maxAttempts || 3; // Get max attempts from exam model or default
       const passingScore = exam.passingScore || 60; // Get passing score from exam model or default
       
+      console.log(`Processing exam ${examId}: ${attempts.length} attempts found`);
+      
       // Check for in-progress attempts and attempt count
       let inProgress = false;
       let attemptCount = 0;
@@ -130,15 +150,19 @@ const getAllExams = async (req, res) => {
       let bestPercentage = 0;
       
       attempts.forEach(attempt => {
+        console.log(`  Attempt ${attempt._id}: status=${attempt.status}, score=${attempt.score}, total=${attempt.totalQuestions}`);
+        
         // Use the attendance utility function to check status properly
         const statusInfo = attendanceUtils.getDetailedStatus(attempt);
         if (statusInfo.inProgress) {
           inProgress = true;
+          console.log(`  Attempt ${attempt._id} is in progress`);
         }
         
         if (attempt.status === "COMPLETED" || attempt.status === "TIMED_OUT") {
           attemptCount++;
           const percentage = (attempt.score / attempt.totalQuestions) * 100;
+          console.log(`  Completed attempt with score: ${attempt.score}/${attempt.totalQuestions} (${percentage.toFixed(1)}%)`);
           if (percentage > bestPercentage) {
             bestScore = attempt.score;
             bestPercentage = percentage;
@@ -146,10 +170,29 @@ const getAllExams = async (req, res) => {
         }
       });
       
+      // Make sure we count all attempts properly
+      if (attempts.length > 0 && attemptCount === 0) {
+        // If we have attempts but none are completed, count in-progress ones too
+        const inProgressCount = attempts.filter(a => a.status === "IN_PROGRESS").length;
+        attemptCount = inProgressCount;
+        console.log(`  Adding ${inProgressCount} in-progress attempts to count`);
+      }
+      
       // Calculate total questions (MCQs + Short Answers)
       const mcqCount = exam.sections?.mcqs?.length || 0;
       const shortAnswerCount = exam.sections?.shortAnswers?.length || 0;
       const totalQuestions = mcqCount + shortAnswerCount;
+      
+      const userStatus = {
+        inProgress,
+        bestScore,
+        bestPercentage: bestPercentage.toFixed(1),
+        attemptCount,
+        canAttempt: attemptCount < maxAttempts,
+        remainingAttempts: Math.max(0, maxAttempts - attemptCount)
+      };
+      
+      console.log(`  Final user status: inProgress=${inProgress}, attemptCount=${attemptCount}, canAttempt=${userStatus.canAttempt}`);
       
       return {
         _id: exam._id,
@@ -164,14 +207,7 @@ const getAllExams = async (req, res) => {
         maxAttempts: maxAttempts,
         passingScore: passingScore,
         // User's attempt status for this exam
-        userStatus: {
-          inProgress,
-          bestScore,
-          bestPercentage: bestPercentage.toFixed(1),
-          attemptCount,
-          canAttempt: attemptCount < maxAttempts,
-          remainingAttempts: Math.max(0, maxAttempts - attemptCount)
-        }
+        userStatus
       };
     });
     

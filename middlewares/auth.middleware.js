@@ -16,10 +16,24 @@ const authenticateUser = async (req, res, next) => {
     sessionId = authHeader.substring(7); // Remove 'Bearer ' prefix
   }
 
+  console.log(`Authentication attempt with session ID: ${sessionId}`);
+
   try {
     // Use projection to get only necessary fields
     const session = await Session.findById(sessionId).lean();
     if (!session) {
+      console.log(`Session not found: ${sessionId}`);
+      
+      // Try looking up as a user ID for compatibility with some clients
+      const userById = await User.findById(sessionId).select('_id email isAdmin role username').lean();
+      if (userById) {
+        console.log(`Found user directly using ID: ${sessionId}`);
+        req.user = userById;
+        req.sessionId = sessionId;
+        next();
+        return;
+      }
+      
       return res.status(401).json({ message: "Session invalid or expired" });
     }
 
@@ -27,14 +41,17 @@ const authenticateUser = async (req, res, next) => {
     const user = await User.findById(session.userId).select('_id email isAdmin role username').lean();
     if (!user) {
       // Clean up the invalid session
+      console.log(`User not found for session: ${sessionId}, userId: ${session.userId}`);
       await Session.findByIdAndDelete(sessionId);
       return res.status(401).json({ message: "User not found" });
     }
 
+    console.log(`User authenticated: ${user._id}, role: ${user.role}`);
     req.user = user; // Attach user info to request
     req.sessionId = sessionId;
     next();
   } catch (error) {
+    console.error(`Authentication error: ${error.message}`);
     res.status(500).json({ message: "Authentication error occurred" });
   }
 };

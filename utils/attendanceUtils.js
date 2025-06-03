@@ -128,6 +128,9 @@ function getDetailedStatus(attendance, userExamData = null) {
   // Ensure status is properly formatted (enforce case-sensitivity)
   const statusValue = attendance.status || 'IN_PROGRESS';
   
+  // Debug logging for troubleshooting
+  console.log(`Detailed status for attendance ${attendance._id}: status=${statusValue}`);
+  
   // Get answered count from memory if available
   let answeredCount = 0;
   if (userExamData && 
@@ -138,16 +141,20 @@ function getDetailedStatus(attendance, userExamData = null) {
     ).length;
   }
   
+  // A more reliable way to check if the exam is in progress
+  const isInProgress = statusValue === 'IN_PROGRESS' || 
+                      (!attendance.endTime && statusValue !== 'COMPLETED' && statusValue !== 'TIMED_OUT');
+  
   return {
     status: statusValue,
     statusDisplay: getStatusDisplay(statusValue),
-    score: statusValue === 'IN_PROGRESS' ? null : attendance.score,
+    score: isInProgress ? null : attendance.score,
     totalQuestions: attendance.totalQuestions,
-    attemptedQuestions: statusValue === 'IN_PROGRESS' ? answeredCount : attendance.attemptedQuestions,
+    attemptedQuestions: isInProgress ? answeredCount : attendance.attemptedQuestions,
     startTime: attendance.startTime,
     endTime: attendance.endTime,
     attemptNumber: attendance.attemptNumber || 1,
-    inProgress: statusValue === 'IN_PROGRESS',
+    inProgress: isInProgress,
     completed: statusValue === 'COMPLETED',
     timedOut: statusValue === 'TIMED_OUT'
   };
