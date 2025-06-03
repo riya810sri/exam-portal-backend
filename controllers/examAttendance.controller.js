@@ -2303,6 +2303,26 @@ const startMonitoring = async (req, res) => {
     const { examId } = req.params;
     const userId = req.user._id;
     
+    // Check student restrictions first
+    const StudentRestrictionManager = require('../utils/studentRestrictionManager');
+    const studentRestrictionManager = new StudentRestrictionManager();
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    
+    const restrictionCheck = await studentRestrictionManager.canTakeExam(userId, examId, ipAddress);
+    
+    if (!restrictionCheck.allowed) {
+      console.log(`🚫 Monitoring blocked due to restriction: ${restrictionCheck.restriction.type}`);
+      return res.status(403).json({
+        message: "Access denied",
+        restriction: {
+          type: restrictionCheck.restriction.type,
+          reason: restrictionCheck.restriction.reason,
+          message: restrictionCheck.message
+        },
+        success: false
+      });
+    }
+    
     // Find the in-progress attendance record
     const attendance = await ExamAttendance.findOne({
       examId,

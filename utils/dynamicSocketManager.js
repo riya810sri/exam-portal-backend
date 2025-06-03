@@ -7,6 +7,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const SecurityEvent = require('../models/securityEvent.model');
 const { socketAntiAbuseManager } = require('./socketAntiAbuse');
+const { StudentRestrictionManager } = require('./studentRestrictionManager');
 
 class DynamicSocketManager {
   constructor() {
@@ -97,8 +98,24 @@ class DynamicSocketManager {
     io.on('connection', async (socket) => {
       console.log(`📡 Client connecting to monitoring server ${monit_id}: ${socket.id}`);
       
+      // Check student restrictions first
+      const ipAddress = socket.handshake.address;
+      const studentRestrictionManager = new StudentRestrictionManager();
+      const restrictionCheck = await studentRestrictionManager.canTakeExam(student_id, exam_id, ipAddress);
+      
+      if (!restrictionCheck.allowed) {
+        console.log(`🚫 Connection blocked due to restriction: ${restrictionCheck.restriction.type}`);
+        socket.emit('restriction_blocked', {
+          message: restrictionCheck.message,
+          restriction: restrictionCheck.restriction,
+          action: 'disconnect'
+        });
+        socket.disconnect(true);
+        return;
+      }
+      
       // Validate connection with anti-abuse system
-      const isValid = await socketAntiAbuseManager.validateSocketConnection(socket, monit_id);
+      const isValid = await socketAntiAbuseManager.validateSocketConnection(socket, monit_id, student_id, exam_id);
       if (!isValid) {
         console.log(`❌ Connection rejected for ${monit_id}: ${socket.id}`);
         return;
@@ -124,7 +141,7 @@ class DynamicSocketManager {
 
       // Handle browser validation
       socket.on('browser_validation', async (data) => {
-        await this.validateBrowserClient(socket, data, monit_id);
+        await this.validateBrowserClient(socket, data, monit_id, student_id, exam_id);
       });
 
       // Handle security events from browser
@@ -171,7 +188,7 @@ class DynamicSocketManager {
   /**
    * Validate that the client is a real browser
    */
-  async validateBrowserClient(socket, validationData, monit_id) {
+  async validateBrowserClient(socket, validationData, monit_id, studentId = null, examId = null) {
     console.log(`🔍 Validating browser client for ${monit_id}`);
     
     const {
@@ -280,13 +297,13 @@ class DynamicSocketManager {
       console.log(`❌ Browser validation failed for ${monit_id}:`, reasons);
       
       // Log with anti-abuse system
-      await socketAntiAbuseManager.handleFailedValidation(socket, monit_id, reasons);
+      await socketAntiAbuseManager.handleFailedValidation(socket, monit_id, reasons, studentId, examId);
       
       // Log suspicious connection attempt
       this.logSecurityEvent({
         monit_id,
-        exam_id: this.connections.get(socket.id)?.exam_id,
-        student_id: this.connections.get(socket.id)?.student_id,
+        exam_id: examId || this.connections.get(socket.id)?.exam_id,
+        student_id: studentId || this.connections.get(socket.id)?.student_id,
         event_type: 'automation_detected',
         timestamp: Date.now(),
         details: { reasons, validationData },

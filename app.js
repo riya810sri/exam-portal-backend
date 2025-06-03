@@ -1,7 +1,5 @@
 const express = require("express");
 const cors = require("cors"); // Make sure this is installed
-const http = require('http');
-const socketIo = require('socket.io');
 const db = require('./config/db'); // Ensure this is the correct path to your db.js file
 const config = require("./config/config");
 const net = require('net'); // Added for port checking
@@ -34,17 +32,12 @@ const certificateRoutes = require("./routes/certificate.routes");
 const examAttendanceRoutes = require("./routes/examAttendance.routes");
 const adminAntiAbuseRoutes = require("./routes/admin.antiAbuse.routes");
 const adminSecurityDashboardRoutes = require("./routes/admin.securityDashboard.routes");
+const adminStudentRestrictionsRoutes = require("./routes/admin.studentRestrictions.routes");
 
 const app = express();
-const server = http.createServer(app);
 
-// Initialize Socket.IO with CORS configuration
-const io = socketIo(server, {
-  cors: config.websocket.cors
-});
-
-// Make Socket.IO instance available globally
-global.io = io;
+// Note: WebSocket server on same port as Express is removed
+// Only using the dynamic Socket.IO implementation from dynamicSocketManager.js
 
 const PORT = config.port;
 
@@ -111,53 +104,10 @@ app.use('/api/certificate', certificateRoutes);
 app.use('/api/exam-attendance', examAttendanceRoutes);
 app.use('/api/admin/security', adminAntiAbuseRoutes);
 app.use('/api/admin/security-dashboard', adminSecurityDashboardRoutes);
+app.use('/api/admin/student-restrictions', adminStudentRestrictionsRoutes);
 
-// WebSocket connection handling
-io.on('connection', (socket) => {
-  console.log(`🔌 New WebSocket connection: ${socket.id}`);
-  
-  // Handle authentication
-  socket.on('authenticate', (data) => {
-    try {
-      const { token, userId, examId, isAdmin } = data;
-      
-      // Store user info in socket (you might want to verify the token here)
-      socket.userId = userId;
-      socket.examId = examId;
-      socket.isAdmin = isAdmin;
-      
-      // Join appropriate rooms
-      if (isAdmin) {
-        socket.join('admin-dashboard');
-        console.log(`👨‍💼 Admin ${userId} joined admin dashboard`);
-      } else {
-        socket.join(`exam-${examId}`);
-        socket.join(`user-${userId}`);
-        console.log(`👨‍🎓 User ${userId} joined exam ${examId}`);
-      }
-      
-      socket.emit('authenticated', { 
-        success: true, 
-        message: 'Successfully authenticated',
-        socketId: socket.id 
-      });
-      
-    } catch (error) {
-      console.error('WebSocket authentication error:', error);
-      socket.emit('auth-error', { message: 'Authentication failed' });
-    }
-  });
-  
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log(`🔌 WebSocket disconnected: ${socket.id}`);
-  });
-  
-  // Handle ping for connection testing
-  socket.on('ping', () => {
-    socket.emit('pong');
-  });
-});
+// No WebSocket connections on the main Express server
+// Only using dynamic Socket.IO instances from dynamicSocketManager.js
 
 // Connect to Database
 app.get("/live", (req, res) => {
@@ -204,9 +154,8 @@ async function startServer() {
     
     if (!portInUse) {
       // Port is free, start the server
-      server.listen(currentPort, () => {
+      app.listen(currentPort, () => {
         console.log(`🚀 Server running on http://localhost:${currentPort}`);
-        console.log(`🔌 WebSocket server running on ws://localhost:${currentPort}`);
         console.log(`💻 Host: localhost, Port: ${currentPort}`);
         
         // Log CORS configuration
