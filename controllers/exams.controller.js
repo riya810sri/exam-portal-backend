@@ -183,12 +183,15 @@ const getAllExams = async (req, res) => {
       const shortAnswerCount = exam.sections?.shortAnswers?.length || 0;
       const totalQuestions = mcqCount + shortAnswerCount;
       
+      // Use the exam's own maxAttempts field instead of hardcoded limit
+      const canAttempt = attemptCount < maxAttempts;
+      
       const userStatus = {
         inProgress,
         bestScore,
         bestPercentage: bestPercentage.toFixed(1),
         attemptCount,
-        canAttempt: attemptCount < maxAttempts,
+        canAttempt,
         remainingAttempts: Math.max(0, maxAttempts - attemptCount)
       };
       
@@ -812,7 +815,6 @@ const attendExam = async (req, res) => {
 const archiveCompletedExams = async (req, res) => {
   try {
     console.log("Starting exam archiving process");
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts per exam (increased from 2 to 5)
     const archivedBy = req.user._id;
     let archivedCount = 0;
     let errorCount = 0;
@@ -873,7 +875,7 @@ const archiveCompletedExams = async (req, res) => {
           totalPassedAttempts += passedAttempts.length;
           
           // If a user has at least one pass OR has reached max attempts, they're done
-          const userIsDone = passedAttempts.length > 0 || completedAttempts.length >= MAX_ATTEMPTS;
+          const userIsDone = passedAttempts.length > 0 || completedAttempts.length >= exam.maxAttempts;
           
           // If any user still has attempts available, don't archive
           if (!userIsDone) {

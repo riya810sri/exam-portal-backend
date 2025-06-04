@@ -74,7 +74,6 @@ const attendExam = async (req, res) => {
     const userId = req.user._id;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts
 
     console.log(`Request parameters - examId: ${examId}, userId: ${userId}, newAttempt: ${newAttempt}`);
     
@@ -148,19 +147,19 @@ const attendExam = async (req, res) => {
       }
     }
     
-    // Get count of completed attempts to enforce MAX_ATTEMPTS limit
+    // Get count of completed attempts to enforce exam's maxAttempts limit
     const completedAttemptsCount = await ExamAttendance.countDocuments({
       examId,
       userId,
       status: { $in: ["COMPLETED", "TIMED_OUT"] }
     });
     
-    if (completedAttemptsCount >= MAX_ATTEMPTS) {
-      console.log(`User ${userId} has reached the maximum number of attempts (${MAX_ATTEMPTS}) for exam ${examId}`);
+    if (completedAttemptsCount >= exam.maxAttempts) {
+      console.log(`User ${userId} has reached the maximum number of attempts (${exam.maxAttempts}) for exam ${examId}`);
       return res.status(403).json({
-        message: `You have reached the maximum number of attempts (${MAX_ATTEMPTS}) for this exam.`,
+        message: `You have reached the maximum number of attempts (${exam.maxAttempts}) for this exam.`,
         completedAttempts: completedAttemptsCount,
-        maxAttempts: MAX_ATTEMPTS
+        maxAttempts: exam.maxAttempts
       });
     }
     
@@ -1041,6 +1040,12 @@ const getExamStatus = async (req, res) => {
       return res.status(404).json({ message: "No exam session found" });
     }
 
+    // Get the exam to access maxAttempts field
+    const exam = await Exam.findById(examId).select('maxAttempts');
+    if (!exam) {
+      return res.status(404).json({ message: "Exam not found" });
+    }
+
     // Clean up any stale attendances for this user automatically
     await attendanceUtils.cleanupStaleAttendances();
     
@@ -1063,7 +1068,7 @@ const getExamStatus = async (req, res) => {
     // Add attempts information to the response
     statusInfo.totalAttempts = completedAttempts + inProgressAttempts;
     statusInfo.completedAttempts = completedAttempts;
-    statusInfo.remainingAttempts = Math.max(0, 5 - completedAttempts); // Using MAX_ATTEMPTS = 5
+    statusInfo.remainingAttempts = Math.max(0, exam.maxAttempts - completedAttempts);
     
     // For debugging purposes, log the actual status from the database
     console.log(`Exam status for user ${userId}, exam ${examId}: ${statusInfo.status}, attempts: ${statusInfo.totalAttempts}`);
@@ -1265,7 +1270,6 @@ const getUserExams = async (req, res) => {
   try {
     const userId = req.user._id;
     const { statusFilter, search, sort = 'recent', showAll = 'false' } = req.query;
-    const MAX_ATTEMPTS = 5; // Maximum allowed attempts (increased from 2 to 5)
     
     // Build the query based on filters
     const query = { userId };
@@ -1283,7 +1287,7 @@ const getUserExams = async (req, res) => {
     const examAttendances = await ExamAttendance.find(query)
       .populate({
         path: 'examId',
-        select: 'title description duration status publishedAt',
+        select: 'title description duration status publishedAt maxAttempts',
       })
       .sort({ startTime: -1 }); // Sort by most recent first
     
@@ -1317,6 +1321,7 @@ const getUserExams = async (req, res) => {
           examTitle: attendance.examId.title || 'Unknown Exam',
           examDescription: attendance.examId.description || '',
           examDuration: attendance.examId.duration || 0,
+          maxAttempts: attendance.examId.maxAttempts || 3, // Use exam's maxAttempts field
           bestScore: 0,
           bestPercentage: '0.00',
           bestAttemptNumber: 0,
@@ -1397,7 +1402,7 @@ const getUserExams = async (req, res) => {
     // Determine which exams should be hidden (passed or max attempts reached)
     // and mark them accordingly
     Object.values(examMap).forEach(exam => {
-      if (exam.hasPassed || exam.completedAttempts >= MAX_ATTEMPTS) {
+      if (exam.hasPassed || exam.completedAttempts >= exam.maxAttempts) {
         exam.shouldHide = true;
       }
     });
@@ -1433,8 +1438,8 @@ const getUserExams = async (req, res) => {
       exam.attempts.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
       
       // Add remaining attempts info
-      exam.remainingAttempts = Math.max(0, MAX_ATTEMPTS - exam.completedAttempts);
-      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < MAX_ATTEMPTS;
+      exam.remainingAttempts = Math.max(0, exam.maxAttempts - exam.completedAttempts);
+      exam.canAttempt = !exam.hasPassed && exam.completedAttempts < exam.maxAttempts;
     });
     
     // Prepare summary stats
@@ -1453,8 +1458,7 @@ const getUserExams = async (req, res) => {
         passedExams,
         passRate: totalExams > 0 ? `${((passedExams / totalExams) * 100).toFixed(1)}%` : '0%',
         hiddenExams: Object.values(examMap).filter(exam => exam.shouldHide).length,
-        showAll: showAll === 'true',
-        maxAttemptsAllowed: MAX_ATTEMPTS
+        showAll: showAll === 'true'
       },
       exams: filteredExams.map(exam => ({
         ...exam,
@@ -1464,8 +1468,8 @@ const getUserExams = async (req, res) => {
           inProgress: exam.attempts.filter(a => a.status === 'IN_PROGRESS').length,
           remaining: exam.remainingAttempts,
           canAttempt: exam.canAttempt,
-          maxAttemptsReached: exam.completedAttempts >= MAX_ATTEMPTS,
-          maxAttempts: MAX_ATTEMPTS
+          maxAttemptsReached: exam.completedAttempts >= exam.maxAttempts,
+          maxAttempts: exam.maxAttempts
         }
       }))
     });
