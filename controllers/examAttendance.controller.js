@@ -70,8 +70,15 @@ const attendExam = async (req, res) => {
   try {
     console.log("Starting exam attendance process");
     const { examId } = req.params;
-    const { page = 1, limit = 1, newAttempt = false } = req.query;
+    const { page = 1, limit = 1, newAttempt = false, forceNewAttempt = false } = req.query;
     const userId = req.user._id;
+
+    // Validate examId
+    if (!mongoose.Types.ObjectId.isValid(examId)) {
+      console.error(`Invalid examId received: ${examId}`);
+      return res.status(400).json({ message: "Invalid Exam ID format." });
+    }
+
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
 
@@ -128,11 +135,13 @@ const attendExam = async (req, res) => {
     const highestScoreAttempt = await ExamAttendance.findOne({
       examId,
       userId,
-      status: "COMPLETED"
-    }).sort({ score: -1 });  // Get the highest score attempt
-
-    if (highestScoreAttempt) {
+      status: { $in: ["COMPLETED", "TIMED_OUT"] }
+    }).sort({ score: -1 }); // Get their best score
+    
+    if (highestScoreAttempt && highestScoreAttempt.totalQuestions > 0) {
       const percentage = (highestScoreAttempt.score / highestScoreAttempt.totalQuestions) * 100;
+      
+      // If they scored 60% or higher, don't allow retaking the exam
       if (percentage >= 60) {
         console.log(`User has already passed this exam with ${percentage.toFixed(2)}%`);
         return res.status(403).json({
@@ -166,19 +175,66 @@ const attendExam = async (req, res) => {
     // Get real attempt count and fix inconsistencies
     const realAttemptCount = await getRealAttemptCount(examId, userId);
     
-    // Check for existing in-progress attempts that need to be canceled when starting a new attempt
+    // Check for existing in-progress attempts when new attempt is requested
     if (newAttempt === 'true') {
-      console.log(`Creating new attempt (attempt #${realAttemptCount + 1}) as requested`);
+      console.log(`New attempt requested for user ${userId}, exam ${examId}`);
       
-      try {
-        // First, cancel any existing in-progress attempts
+      // Check if this is a forced new attempt (user explicitly wants to abandon existing session)
+      if (forceNewAttempt === 'true') {
+        console.log(`Force new attempt requested - canceling all existing in-progress attempts`);
+        
+        // Cancel any existing in-progress attempts
         const cancelResult = await ExamAttendance.updateMany(
           { examId, userId, status: "IN_PROGRESS" },
           { status: "TIMED_OUT", endTime: new Date() }
         );
         
-        console.log(`Canceled ${cancelResult.modifiedCount} in-progress attempts`);
+        console.log(`Canceled ${cancelResult.modifiedCount} in-progress attempts (forced)`);
+      } else {
+        // Regular new attempt - check if there's an existing valid session first
+        const existingInProgress = await ExamAttendance.findOne({
+          examId, 
+          userId, 
+          status: "IN_PROGRESS"
+        });
         
+        if (existingInProgress) {
+          // Check if the existing attempt is still valid (not stale)
+          const attemptAge = Date.now() - existingInProgress.startTime.getTime();
+          const maxAttemptAge = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
+          
+          if (attemptAge < maxAttemptAge) {
+            // Existing attempt is still valid - offer to continue instead of creating new
+            console.log(`Found valid existing attempt #${existingInProgress.attemptNumber} for user ${userId}`);
+            
+            return res.status(409).json({
+              message: "You have an existing exam session in progress.",
+              continueUrl: `/api/exam-attendance/${examId}/attend`,
+              newAttemptUrl: `/api/exam-attendance/${examId}/force-new-attempt`,
+              existingAttempt: {
+                attemptNumber: existingInProgress.attemptNumber,
+                startTime: existingInProgress.startTime,
+                timeElapsed: Math.floor(attemptAge / (1000 * 60)), // minutes
+                attemptedQuestions: existingInProgress.attemptedQuestions || 0
+              },
+              options: {
+                continue: "Continue your existing exam session",
+                startNew: "Start a new attempt (your current progress will be lost)"
+              }
+            });
+          } else {
+            // Existing attempt is stale - safe to timeout and start new
+            console.log(`Found stale attempt #${existingInProgress.attemptNumber}, timing it out`);
+            existingInProgress.status = "TIMED_OUT";
+            existingInProgress.endTime = new Date();
+            await existingInProgress.save();
+          }
+        }
+      }
+      
+      console.log(`Creating new attempt (attempt #${realAttemptCount + 1}) as requested`);
+      
+      try {
         // Calculate next attempt number based on real attempt count
         const nextAttemptNumber = realAttemptCount + 1;
         console.log(`Using attempt number: ${nextAttemptNumber}`);

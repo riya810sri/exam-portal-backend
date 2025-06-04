@@ -82,6 +82,14 @@ router.get("/:examId/new-attempt", blockPostman, authenticateUser, collectAntiAb
   attendExam(req, res);
 });
 
+// Route for forcing a new attempt (abandoning existing session)
+router.get("/:examId/force-new-attempt", blockPostman, authenticateUser, collectAntiAbuseData, (req, res) => {
+  // Force new attempt by canceling existing ones
+  req.query.forceNewAttempt = 'true';
+  req.query.newAttempt = 'true';
+  attendExam(req, res);
+});
+
 // Route for canceling an in-progress exam attempt
 router.post("/:examId/cancel-in-progress", blockPostman, authenticateUser, cancelInProgressAttempt);
 
