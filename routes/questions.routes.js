@@ -8,7 +8,8 @@ const {
   getQuestionsByExam, 
   deleteQuestion, 
   getQuestionById, 
-  updateQuestion 
+  updateQuestion,
+  exportQuestions
 } = require("../controllers/questions.controller");
 
 // All users can view questions
@@ -17,6 +18,9 @@ router.get("/:id", authenticateUser, getQuestionById);
 
 // Route to get questions by exam ID
 router.get('/exam/:examId', getQuestionsByExam);
+
+// Route to export questions by exam ID
+router.get('/export/:examId', authenticateUser, exportQuestions);
 
 // Route to add questions
 router.post('/', addQuestion);
