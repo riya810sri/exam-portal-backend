@@ -13,27 +13,27 @@ dotenv.config();
  */
 const mailSender = async (email, subject, html, attachments) => {
   try {
-    // const transporter = nodemailer.createTransport({
-    //   host: process.env.MAIL_HOST,
-    //   port: process.env.MAIL_PORT,
-    //   secure: process.env.MAIL_PORT == 465,
-    //   auth: {
-    //     user: process.env.USER1,
-    //     pass: process.env.PASS,
-    //   },
-    //   logger: true,
-    //   debug: true,
-    // });
+    const transporter = nodemailer.createTransport({
+      host: process.env.MAIL_HOST,
+      port: process.env.MAIL_PORT,
+      secure: process.env.MAIL_PORT == 465,
+      auth: {
+        user: process.env.USER1,
+        pass: process.env.PASS,
+      },
+      logger: true,
+      debug: true,
+    });
 
-    // let mailOptions = {
-    //   from: `"TechOnquer Certifications" <${process.env.USER1}>`,
-    //   to: email,
-    //   subject: subject,
-    //   html: html, // Use the HTML content directly without wrapping in <p> tags
-    //   attachments: attachments || [], // Ensure attachments is always an array
-    // };
+    let mailOptions = {
+      from: `"TechOnquer Certifications" <${process.env.USER1}>`,
+      to: email,
+      subject: subject,
+      html: html, // Use the HTML content directly without wrapping in <p> tags
+      attachments: attachments || [], // Ensure attachments is always an array
+    };
 
-    // let info = await transporter.sendMail(mailOptions);
+    let info = await transporter.sendMail(mailOptions);
     console.log(`Email sent to ${email}: ${info.messageId}`);
     return info;
   } catch (error) {
