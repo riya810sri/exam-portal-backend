@@ -1,0 +1,407 @@
+/* AutoFullscreenExam.css */
+
+.exam-container {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+/* Exam Start Screen */
+.exam-start-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+  text-align: center;
+}
+
+.exam-start-screen h1 {
+  font-size: 2.5rem;
+  margin-bottom: 2rem;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.security-info {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  margin: 2rem 0;
+  max-width: 600px;
+}
+
+.security-info h3 {
+  color: #ffd700;
+  margin-bottom: 1rem;
+}
+
+.security-info ul {
+  text-align: left;
+  list-style: none;
+  padding: 0;
+}
+
+.security-info li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.security-info li:last-child {
+  border-bottom: none;
+}
+
+.start-exam-button {
+  background: linear-gradient(45deg, #2196F3, #21CBF3);
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(33, 150, 243, 0.4);
+  margin: 2rem 0;
+}
+
+.start-exam-button:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(33, 150, 243, 0.6);
+}
+
+.start-exam-button:active {
+  transform: translateY(-1px);
+}
+
+.disclaimer {
+  max-width: 500px;
+  opacity: 0.8;
+  font-size: 0.9rem;
+}
+
+/* Security Badge */
+.security-badge {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 25px;
+  font-weight: bold;
+  font-size: 0.9rem;
+  z-index: 9999;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.security-badge.active {
+  background: linear-gradient(45deg, #4CAF50, #45a049);
+  color: white;
+  animation: slideInRight 0.5s ease-out;
+}
+
+.security-badge.inactive {
+  background: linear-gradient(45deg, #ff9800, #f57c00);
+  color: white;
+  animation: pulse 2s infinite;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Security Alerts */
+.security-alerts {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 10000;
+  max-width: 350px;
+}
+
+.security-alert {
+  background: linear-gradient(45deg, #f44336, #d32f2f);
+  color: white;
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+  border-radius: 10px;
+  box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
+  animation: slideInAlert 0.5s ease-out;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.alert-content h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+}
+
+.alert-content p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.alert-content small {
+  opacity: 0.8;
+  font-size: 0.8rem;
+}
+
+.dismiss-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+}
+
+.dismiss-btn:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+@keyframes slideInAlert {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Exam Content */
+.exam-content {
+  padding: 2rem;
+  padding-top: 100px; /* Account for security badge */
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.exam-header {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  border-radius: 15px;
+  margin-bottom: 2rem;
+  backdrop-filter: blur(10px);
+}
+
+.exam-header h2 {
+  margin: 0 0 1rem 0;
+  font-size: 2rem;
+}
+
+.exam-info {
+  display: flex;
+  gap: 2rem;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.exam-info span {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+}
+
+/* Questions */
+.questions-container {
+  margin-bottom: 2rem;
+}
+
+.question-card {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  margin-bottom: 2rem;
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.question-card h3 {
+  margin: 0 0 1rem 0;
+  color: #ffd700;
+  font-size: 1.3rem;
+}
+
+.question-card p {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+.answer-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.3s ease;
+}
+
+.answer-input:focus {
+  outline: none;
+  border-color: #2196F3;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.answer-input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Exam Actions */
+.exam-actions {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.submit-button {
+  background: linear-gradient(45deg, #4CAF50, #45a049);
+  color: white;
+  border: none;
+  padding: 1rem 3rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+}
+
+.submit-button:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(76, 175, 80, 0.6);
+}
+
+.submit-button:active {
+  transform: translateY(-1px);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .exam-container {
+    padding: 1rem;
+  }
+
+  .exam-start-screen h1 {
+    font-size: 2rem;
+  }
+
+  .security-info {
+    padding: 1.5rem;
+    margin: 1rem 0;
+  }
+
+  .exam-content {
+    padding: 1rem;
+    padding-top: 80px;
+  }
+
+  .exam-header {
+    padding: 1.5rem;
+  }
+
+  .exam-header h2 {
+    font-size: 1.5rem;
+  }
+
+  .exam-info {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .question-card {
+    padding: 1.5rem;
+  }
+
+  .security-badge {
+    position: static;
+    margin: 1rem;
+    text-align: center;
+  }
+
+  .security-alerts {
+    position: static;
+    margin: 1rem;
+    max-width: none;
+  }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .exam-container {
+    background: #000;
+    color: #fff;
+  }
+
+  .security-info,
+  .exam-header,
+  .question-card {
+    background: #333;
+    border: 2px solid #fff;
+  }
+
+  .answer-input {
+    background: #222;
+    border: 2px solid #fff;
+    color: #fff;
+  }
+}
+
+/* Print styles (disable for security) */
+@media print {
+  * {
+    display: none !important;
+  }
+  
+  body::after {
+    content: "Printing is not allowed during the exam.";
+    display: block !important;
+    text-align: center;
+    font-size: 2rem;
+    padding: 2rem;
+  }
+}

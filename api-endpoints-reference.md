@@ -643,4 +643,149 @@ curl -X GET \
     // Additional questions...
   ]
 }
-``` 
+```
+
+---
+
+## 13. Export Exam Questions
+
+Export exam questions in multiple formats (JSON, CSV, TXT) for backup or external use.
+
+### Request
+
+```bash
+# Export as JSON (default)
+curl -X GET \
+  http://localhost:3000/api/questions/export/675e1dd1b94635e89f8dd1f0 \
+  -H 'Authorization: Bearer <your-jwt-token>' \
+  -o "questions_export.json"
+
+# Export as CSV
+curl -X GET \
+  "http://localhost:3000/api/questions/export/675e1dd1b94635e89f8dd1f0?format=csv" \
+  -H 'Authorization: Bearer <your-jwt-token>' \
+  -o "questions_export.csv"
+
+# Export as TXT
+curl -X GET \
+  "http://localhost:3000/api/questions/export/675e1dd1b94635e89f8dd1f0?format=txt" \
+  -H 'Authorization: Bearer <your-jwt-token>' \
+  -o "questions_export.txt"
+```
+
+### JSON Response
+
+```json
+{
+  "exam": {
+    "id": "675e1dd1b94635e89f8dd1f0",
+    "title": "JavaScript Fundamentals",
+    "description": "Test your knowledge of JavaScript basics",
+    "exportedAt": "2025-06-15T10:30:00.000Z"
+  },
+  "questions": [
+    {
+      "id": "675e1dd1b94635e89f8dd1f1",
+      "type": "MCQ",
+      "questionText": "What is the correct way to declare a variable in JavaScript?",
+      "options": ["var x = 5;", "variable x = 5;", "v x = 5;", "declare x = 5;"],
+      "correctAnswer": "var x = 5;"
+    },
+    {
+      "id": "675e1dd1b94635e89f8dd1f2",
+      "type": "ShortAnswer",
+      "questionText": "Explain the concept of closure in JavaScript.",
+      "options": [],
+      "correctAnswer": "A closure is a function that has access to variables in its outer scope even after the outer function has returned."
+    }
+  ],
+  "totalQuestions": 2
+}
+```
+
+### CSV Response Format
+
+The CSV file will contain headers and question data in a spreadsheet-friendly format:
+
+```csv
+Question ID,Type,Question Text,Option 1,Option 2,Option 3,Option 4,Correct Answer
+675e1dd1b94635e89f8dd1f1,MCQ,"What is the correct way to declare a variable in JavaScript?","var x = 5;","variable x = 5;","v x = 5;","declare x = 5;","var x = 5;"
+675e1dd1b94635e89f8dd1f2,ShortAnswer,"Explain the concept of closure in JavaScript.","","","","","A closure is a function that has access to variables in its outer scope even after the outer function has returned."
+```
+
+### TXT Response Format
+
+The TXT file provides a human-readable format:
+
+```
+EXAM: JavaScript Fundamentals
+DESCRIPTION: Test your knowledge of JavaScript basics
+EXPORTED: 6/15/2025, 10:30:00 AM
+TOTAL QUESTIONS: 2
+==================================================
+
+QUESTION 1: [MCQ]
+What is the correct way to declare a variable in JavaScript?
+OPTIONS:
+  A. var x = 5;
+  B. variable x = 5;
+  C. v x = 5;
+  D. declare x = 5;
+CORRECT ANSWER: var x = 5;
+------------------------------
+
+QUESTION 2: [ShortAnswer]
+Explain the concept of closure in JavaScript.
+CORRECT ANSWER: A closure is a function that has access to variables in its outer scope even after the outer function has returned.
+------------------------------
+```
+
+### Error Responses
+
+```json
+// 400 Bad Request - Missing exam ID
+{
+  "message": "Exam ID is required"
+}
+
+// 404 Not Found - Exam doesn't exist
+{
+  "message": "Exam not found"
+}
+
+// 404 Not Found - No questions found
+{
+  "message": "No questions found for this exam"
+}
+
+// 400 Bad Request - Unsupported format
+{
+  "message": "Unsupported format. Supported formats: json, csv, txt"
+}
+
+// 401 Unauthorized - Missing or invalid token
+{
+  "message": "Access denied. No token provided."
+}
+```
+
+### Parameters
+
+- **examId** (path parameter): MongoDB ObjectId of the exam
+- **format** (query parameter): Export format - `json` (default), `csv`, or `txt`
+
+### Response Headers
+
+All export formats include appropriate headers for file download:
+- `Content-Type`: application/json, text/csv, or text/plain
+- `Content-Disposition`: attachment with auto-generated filename
+
+### Use Cases
+
+1. **Backup**: Export questions for backup purposes
+2. **Migration**: Transfer questions between systems
+3. **Review**: Share questions with stakeholders
+4. **Analysis**: Import into spreadsheet tools for analysis
+5. **Printing**: Use TXT format for physical copies
+
+---

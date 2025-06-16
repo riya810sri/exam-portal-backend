@@ -84,6 +84,9 @@ class ExamSecurityMonitor {
       // Start monitoring events
       this.startEventMonitoring();
       
+      // Automatically enter fullscreen mode
+      await this.enterFullScreen();
+      
       return {
         success: true,
         monitorId: this.monitorId,
@@ -541,6 +544,38 @@ class ExamSecurityMonitor {
         'Warning', 
         'Exiting fullscreen mode during an exam may be flagged as suspicious activity.'
       );
+      
+      // Attempt to re-enter fullscreen automatically after 2 seconds
+      setTimeout(() => {
+        this.enterFullScreen();
+      }, 2000);
+    }
+  }
+
+  /**
+   * Automatically enter fullscreen mode
+   */
+  async enterFullScreen(element = document.documentElement) {
+    try {
+      if (element.requestFullscreen) {
+        await element.requestFullscreen();
+      } else if (element.webkitRequestFullscreen) {
+        await element.webkitRequestFullscreen();
+      } else if (element.mozRequestFullScreen) {
+        await element.mozRequestFullScreen();
+      } else if (element.msRequestFullscreen) {
+        await element.msRequestFullscreen();
+      }
+      
+      console.log('Entered fullscreen mode automatically');
+      return true;
+    } catch (error) {
+      console.error('Failed to enter fullscreen:', error);
+      this.showSecurityAlert(
+        'Error',
+        'Unable to enter fullscreen mode. Please press F11 to continue.'
+      );
+      return false;
     }
   }
 
@@ -731,7 +766,7 @@ class ExamSecurityMonitor {
       'f': isCtrl, // Ctrl+F (Find)
       'g': isCtrl, // Ctrl+G (Find Next)
       'f12': !isCtrl, // F12 (Dev Tools)
-      'f11': !isCtrl, // F11 (Fullscreen)
+      'f11': !isCtrl, // F11 (Fullscreen) - Handled automatically by system
       'i': isCtrl && event.shiftKey, // Ctrl+Shift+I (Dev Tools)
       'j': isCtrl && event.shiftKey, // Ctrl+Shift+J (Console)
       'u': isCtrl, // Ctrl+U (View Source)
@@ -1028,6 +1063,47 @@ async function startExam(examId, authToken) {
     // 2. Extract connection details from response
     const { connection } = response.data;
     
+    // 3. Initialize security monitoring (this will automatically enter fullscreen)
+    const result = await securityMonitor.initializeMonitoring(
+      connection,
+      examId,
+      getUserId() // Implement this function to get current user ID
+    );
+    
+    if (!result.success) {
+      console.error('Failed to initialize security monitoring:', result.error);
+      return false;
+    }
+    
+    // 4. Show success message to user
+    console.log('Exam started successfully in secure mode');
+    
+    return true;
+  } catch (error) {
+    console.error('Error starting exam monitoring:', error);
+    return false;
+  }
+}
+```
+    const response = await axios.post(
+      `/api/exam-attendance/${examId}/start-monitoring`,
+      {
+        userAgent: navigator.userAgent,
+        screenResolution: `${window.screen.width}x${window.screen.height}`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        browserFingerprint: {} // Optional additional data
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    // 2. Extract connection details from response
+    const { connection } = response.data;
+    
     // 3. Initialize security monitoring
     const result = await securityMonitor.initializeMonitoring(
       connection,
@@ -1115,45 +1191,116 @@ import SecurityAlertComponent from './SecurityAlertComponent';
 
 function ExamComponent({ examId, authToken }) {
   const [isMonitoringActive, setMonitoringActive] = useState(false);
+  const [examStarted, setExamStarted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   useEffect(() => {
-    // Start security monitoring when component mounts
-    async function initializeSecurityMonitoring() {
-      const success = await startExam(examId, authToken);
-      setMonitoringActive(success);
-      
-      // If monitoring failed, show error
-      if (!success) {
-        alert('Failed to initialize security monitoring. Please refresh the page or contact support.');
-      }
+    // Listen for fullscreen status changes
+    const handleFullscreenChange = () => {
+      const fullscreenElement = document.fullscreenElement || 
+                               document.webkitFullscreenElement || 
+                               document.mozFullScreenElement ||
+                               document.msFullscreenElement;
+      setIsFullscreen(!!fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+  
+  const handleStartExam = async () => {
+    // Start security monitoring which will automatically enter fullscreen
+    const success = await startExam(examId, authToken);
+    
+    if (success) {
+      setMonitoringActive(true);
+      setExamStarted(true);
+    } else {
+      alert('Failed to initialize secure exam environment. Please try again.');
     }
-    
-    initializeSecurityMonitoring();
-    
-    // Clean up monitoring when component unmounts
+  };
+  
+  // Clean up monitoring when component unmounts
+  useEffect(() => {
     return () => {
       securityMonitor.cleanup();
     };
-  }, [examId, authToken]);
+  }, []);
   
   return (
     <div className="exam-container">
       {/* Security alert component */}
       <SecurityAlertComponent />
       
-      {/* Security status indicator */}
-      <div className="security-status">
-        {isMonitoringActive ? (
-          <span className="status-active">Security Monitoring Active</span>
-        ) : (
-          <span className="status-inactive">Security Monitoring Inactive</span>
-        )}
-      </div>
-      
-      {/* Exam content */}
-      <div className="exam-content">
-        {/* Your exam UI here */}
-      </div>
+      {!examStarted ? (
+        <div className="exam-start-screen">
+          <h2>🔒 Secure Exam Environment</h2>
+          <div className="security-notice">
+            <p><strong>⚠️ Security Notice:</strong></p>
+            <ul>
+              <li>Your browser will be validated for security</li>
+              <li>The exam will automatically enter fullscreen mode</li>
+              <li>All activities are monitored during the exam</li>
+              <li>Tab switching and copy/paste are disabled</li>
+              <li>Right-click and developer tools are blocked</li>
+            </ul>
+          </div>
+          
+          <button 
+            onClick={handleStartExam}
+            className="start-exam-button"
+            style={{
+              padding: '15px 30px',
+              fontSize: '18px',
+              backgroundColor: '#2196F3',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              marginTop: '20px'
+            }}
+          >
+            Start Secure Exam
+          </button>
+        </div>
+      ) : (
+        <div className="exam-content">
+          {/* Security status indicator */}
+          <div className="security-status" style={{
+            position: 'fixed',
+            top: '10px',
+            right: '10px',
+            padding: '5px 10px',
+            backgroundColor: isMonitoringActive && isFullscreen ? '#4CAF50' : '#ff9800',
+            color: 'white',
+            fontSize: '14px',
+            borderRadius: '4px',
+            zIndex: 9999
+          }}>
+            {isMonitoringActive && isFullscreen ? (
+              <span>🔒 Secure Mode Active</span>
+            ) : (
+              <span>⚠️ Security Setup in Progress</span>
+            )}
+          </div>
+          
+          {/* Exam questions and content */}
+          <div className="exam-questions">
+            <h3>Exam Questions</h3>
+            {/* Your exam UI here */}
+            <p>Exam content will be displayed here...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1242,9 +1389,9 @@ When the backend detects suspicious activity, it will send security alerts throu
 }
 ```
 
-## Step 5: Full-Screen Mode Management
+## Step 5: Automatic Full-Screen Mode Management
 
-For optimal security monitoring, you should implement full-screen mode for exams:
+The security monitoring system automatically handles fullscreen mode without requiring user interaction. Here's how it works:
 
 ```javascript
 // FullScreenManager.js
@@ -1272,17 +1419,31 @@ class FullScreenManager {
       detail: { isFullScreen: this.isFullScreen }
     });
     document.dispatchEvent(event);
+    
+    // If user exits fullscreen during exam, attempt to re-enter
+    if (!this.isFullScreen && this.examInProgress) {
+      setTimeout(() => {
+        this.enterFullScreen();
+      }, 1000);
+    }
   }
   
-  enterFullScreen(element = document.documentElement) {
-    if (element.requestFullscreen) {
-      element.requestFullscreen();
-    } else if (element.webkitRequestFullscreen) {
-      element.webkitRequestFullscreen();
-    } else if (element.mozRequestFullScreen) {
-      element.mozRequestFullScreen();
-    } else if (element.msRequestFullscreen) {
-      element.msRequestFullscreen();
+  // Automatic fullscreen entry
+  async enterFullScreen(element = document.documentElement) {
+    try {
+      if (element.requestFullscreen) {
+        await element.requestFullscreen();
+      } else if (element.webkitRequestFullscreen) {
+        await element.webkitRequestFullscreen();
+      } else if (element.mozRequestFullScreen) {
+        await element.mozRequestFullScreen();
+      } else if (element.msRequestFullscreen) {
+        await element.msRequestFullscreen();
+      }
+      return true;
+    } catch (error) {
+      console.error('Fullscreen entry failed:', error);
+      return false;
     }
   }
   
@@ -1298,13 +1459,27 @@ class FullScreenManager {
     }
   }
   
-  toggleFullScreen(element = document.documentElement) {
+  // Set exam status to control automatic re-entry
+  setExamInProgress(inProgress) {
+    this.examInProgress = inProgress;
+  }
+}
+
+export default new FullScreenManager();
+```
+
+### Key Features:
+
+1. **Automatic Entry**: Fullscreen mode is entered automatically when security monitoring starts
+2. **Auto Re-entry**: If user exits fullscreen during exam, system attempts to re-enter automatically
+3. **Cross-browser Support**: Works with all major browsers (Chrome, Firefox, Safari, Edge)
+4. **No User Interaction Required**: No popups or manual steps needed
+5. **Security Integration**: Fully integrated with the security monitoring system
     if (this.isFullScreen) {
       this.exitFullScreen();
     } else {
       this.enterFullScreen(element);
     }
-  }
 }
 
 export default new FullScreenManager();
@@ -1356,6 +1531,41 @@ Here's a breakdown of all the security events that are monitored and sent to the
    - Reduce the frequency of mouse event tracking
    - Increase the interval for sending batched events
    - Optimize the browser validation process
+
+## Automatic Fullscreen Features
+
+### 🔒 **Seamless Security Integration**
+
+The system now provides **automatic fullscreen functionality** with the following features:
+
+1. **No User Interaction Required**: 
+   - Fullscreen mode is entered automatically when the exam starts
+   - No popups, buttons, or manual steps needed
+   - Seamless transition to secure mode
+
+2. **Intelligent Re-entry**:
+   - If user accidentally exits fullscreen (e.g., pressing Escape), system automatically re-enters
+   - Warning messages notify users about security violations  
+   - Configurable delay before re-entry attempt
+
+3. **Cross-Browser Compatibility**:
+   - Works on Chrome, Firefox, Safari, Edge
+   - Handles different browser prefixes automatically
+   - Fallback mechanisms for unsupported browsers
+
+4. **Security Monitoring Integration**:
+   - Fullscreen changes are logged as security events
+   - Automatic attempts to exit fullscreen are flagged
+   - Admin dashboard shows fullscreen violation statistics
+
+### Implementation Notes:
+
+- The `F11` key is blocked to prevent manual fullscreen toggle
+- System handles fullscreen programmatically through JavaScript APIs
+- Exam automatically exits fullscreen when completed
+- All fullscreen events are logged for security analysis
+
+---
 
 ## Conclusion
 

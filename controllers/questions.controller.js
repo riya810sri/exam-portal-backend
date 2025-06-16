@@ -265,10 +265,133 @@ const updateQuestion = async (req, res) => {
   }
 };
 
+const exportQuestions = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const { format = 'json' } = req.query; // Default to JSON format
+
+    // Validate examId
+    if (!examId) {
+      return res.status(400).json({ message: "Exam ID is required" });
+    }
+
+    // Check if exam exists
+    const exam = await Exam.findById(examId);
+    if (!exam) {
+      return res.status(404).json({ message: "Exam not found" });
+    }
+
+    // Get all questions for the exam
+    const questions = await Question.find({ examId }).populate('examId', 'title description');
+
+    if (!questions.length) {
+      return res.status(404).json({ message: "No questions found for this exam" });
+    }
+
+    // Handle different export formats
+    switch (format.toLowerCase()) {
+      case 'json':
+        return exportAsJSON(res, questions, exam);
+      case 'csv':
+        return exportAsCSV(res, questions, exam);
+      case 'txt':
+        return exportAsText(res, questions, exam);
+      default:
+        return res.status(400).json({ 
+          message: "Unsupported format. Supported formats: json, csv, txt" 
+        });
+    }
+
+  } catch (error) {
+    console.error("Error exporting questions:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message 
+    });
+  }
+};
+
+// Export as JSON
+const exportAsJSON = (res, questions, exam) => {
+  const exportData = {
+    exam: {
+      id: exam._id,
+      title: exam.title,
+      description: exam.description,
+      exportedAt: new Date().toISOString()
+    },
+    questions: questions.map(q => ({
+      id: q._id,
+      type: q.type,
+      questionText: q.questionText,
+      options: q.options || [],
+      correctAnswer: q.correctAnswer
+    })),
+    totalQuestions: questions.length
+  };
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="questions_${exam.title.replace(/\s+/g, '_')}_${Date.now()}.json"`);
+  res.status(200).json(exportData);
+};
+
+// Export as CSV
+const exportAsCSV = (res, questions, exam) => {
+  let csvContent = 'Question ID,Type,Question Text,Option 1,Option 2,Option 3,Option 4,Correct Answer\n';
+  
+  questions.forEach(q => {
+    const options = q.options || [];
+    const optionsCsv = [
+      options[0] || '',
+      options[1] || '',
+      options[2] || '',
+      options[3] || ''
+    ].map(opt => `"${(opt || '').replace(/"/g, '""')}"`).join(',');
+    
+    const questionText = `"${q.questionText.replace(/"/g, '""')}"`;
+    const correctAnswer = `"${q.correctAnswer.replace(/"/g, '""')}"`;
+    
+    csvContent += `${q._id},${q.type},${questionText},${optionsCsv},${correctAnswer}\n`;
+  });
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="questions_${exam.title.replace(/\s+/g, '_')}_${Date.now()}.csv"`);
+  res.status(200).send(csvContent);
+};
+
+// Export as Text
+const exportAsText = (res, questions, exam) => {
+  let textContent = `EXAM: ${exam.title}\n`;
+  textContent += `DESCRIPTION: ${exam.description || 'N/A'}\n`;
+  textContent += `EXPORTED: ${new Date().toLocaleString()}\n`;
+  textContent += `TOTAL QUESTIONS: ${questions.length}\n`;
+  textContent += `${'='.repeat(50)}\n\n`;
+
+  questions.forEach((q, index) => {
+    textContent += `QUESTION ${index + 1}: [${q.type}]\n`;
+    textContent += `${q.questionText}\n`;
+    
+    if (q.options && q.options.length > 0) {
+      textContent += `OPTIONS:\n`;
+      q.options.forEach((option, optIndex) => {
+        textContent += `  ${String.fromCharCode(65 + optIndex)}. ${option}\n`;
+      });
+    }
+    
+    textContent += `CORRECT ANSWER: ${q.correctAnswer}\n`;
+    textContent += `${'-'.repeat(30)}\n\n`;
+  });
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Content-Disposition', `attachment; filename="questions_${exam.title.replace(/\s+/g, '_')}_${Date.now()}.txt"`);
+  res.status(200).send(textContent);
+};
+
 module.exports = { 
   addQuestion, 
   getQuestionsByExam, 
   deleteQuestion,
   getQuestionById,
-  updateQuestion
+  updateQuestion,
+  exportQuestions
 };

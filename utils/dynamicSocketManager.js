@@ -82,10 +82,26 @@ class DynamicSocketManager {
 
       console.log(`🔌 Created Socket.IO server for ${monit_id} on port ${port}`);
 
+      // Log server creation with full connection details
+      console.log(`📊 Monitoring server details:
+      - Host: localhost
+      - Port: ${port}
+      - URI: wss://test.test.com
+      - Monitor ID: ${monit_id}
+      - Exam ID: ${exam_id}
+      - Student ID: ${student_id}
+      `);
+
       return {
         socket_port: port,
         monit_id,
-        server_url: `http://localhost:${port}`
+        server_url: `http://localhost:${port}`,
+        // Add standardized connection format as requested
+        connection: {
+          host: 'localhost',
+          port: port,
+          uri: 'wss://test.test.com'
+        }
       };
 
     } catch (error) {
@@ -100,6 +116,28 @@ class DynamicSocketManager {
   setupSocketHandlers(io, monit_id, exam_id, student_id) {
     io.on('connection', async (socket) => {
       console.log(`📡 Client connecting to monitoring server ${monit_id}: ${socket.id}`);
+      
+      // Enhanced request logging
+      const requestDetails = {
+        timestamp: new Date().toISOString(),
+        socketId: socket.id,
+        monitorId: monit_id,
+        examId: exam_id,
+        studentId: student_id,
+        ip: socket.handshake.address,
+        userAgent: socket.handshake.headers['user-agent'],
+        origin: socket.handshake.headers.origin,
+        transportType: socket.conn.transport.name,
+        query: socket.handshake.query,
+        connection: {
+          host: 'localhost',
+          port: this.activeServers.get(monit_id)?.port || 'unknown',
+          uri: 'wss://test.test.com'
+        }
+      };
+      
+      // Log the request details
+      console.log('📝 Incoming WebSocket request:', JSON.stringify(requestDetails, null, 2));
       
       // Check student restrictions first
       const ipAddress = socket.handshake.address;
@@ -150,6 +188,14 @@ class DynamicSocketManager {
       // Handle security events from browser
       socket.on('security_event', async (eventData) => {
         try {
+          // Log the security event with detailed connection info
+          this.logSocketEvent('security_event', socket, {
+            ...eventData,
+            monit_id,
+            exam_id,
+            student_id
+          });
+          
           await this.processSecurityEvent(eventData, monit_id, exam_id, student_id, socket);
         } catch (error) {
           console.error('Error processing security event:', error);
@@ -557,6 +603,38 @@ class DynamicSocketManager {
     } catch (error) {
       console.error('Error logging security event:', error);
     }
+  }
+
+  /**
+   * Log socket event details
+   * @param {string} eventType - Type of event 
+   * @param {Object} socket - Socket instance
+   * @param {Object} data - Event data
+   */
+  logSocketEvent(eventType, socket, data = {}) {
+    const serverInfo = this.activeServers.get(data.monit_id || 'unknown');
+    
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      eventType,
+      socketId: socket?.id || 'system',
+      ip: socket?.handshake?.address || 'unknown',
+      monitorId: data.monit_id || 'unknown',
+      examId: data.exam_id || serverInfo?.exam_id || 'unknown',
+      studentId: data.student_id || serverInfo?.student_id || 'unknown',
+      connection: {
+        host: 'localhost',
+        port: serverInfo?.port || 'unknown',
+        uri: 'wss://test.test.com'
+      },
+      data: data
+    };
+    
+    // Log the event
+    console.log(`📝 [Socket Event] ${eventType}:`, JSON.stringify(logEntry, null, 2));
+    
+    // In a production environment, you might want to save this to a database or external logging service
+    return logEntry;
   }
 
   /**
