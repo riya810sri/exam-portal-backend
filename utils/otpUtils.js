@@ -102,6 +102,16 @@ const validateOTPFormat = (otp) => {
 };
 
 /**
+ * Calculates the OTP expiry time (10 minutes from now)
+ * @returns {Date} OTP expiry date
+ */
+const calculateOTPExpiry = () => {
+  const expiry = new Date();
+  expiry.setMinutes(expiry.getMinutes() + 10); // 10 minutes from now
+  return expiry;
+};
+
+/**
  * Hashes an OTP for secure storage
  * @param {string} otp - The OTP to hash
  * @param {string} salt - Salt to use in hashing
@@ -118,5 +128,6 @@ module.exports = {
   generateOTP,
   sendOTPEmail,
   validateOTPFormat,
+  calculateOTPExpiry,
   hashOTP
 };

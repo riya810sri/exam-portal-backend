@@ -9,6 +9,18 @@
 
 ## 🎯 **Recent Implementations**
 
+### ✅ **User Registration Fix (COMPLETED)**
+- **Implementation Date**: June 16, 2025
+- **Status**: Production Ready
+- **Issue**: Registration endpoint failing with `calculateOTPExpiry is not a function`
+- **Solution**: Added missing `calculateOTPExpiry` function to `otpUtils.js`
+
+#### Technical Details:
+- ✅ **Function Added**: `calculateOTPExpiry()` - generates 10-minute expiry
+- ✅ **Module Exports**: Updated to include new function
+- ✅ **Registration Flow**: Now works end-to-end with OTP generation
+- ✅ **Verification**: Tested with multiple curl requests
+
 ### ✅ **Automatic Fullscreen Security (COMPLETED)**
 - **Implementation Date**: June 16, 2025
 - **Status**: Production Ready
