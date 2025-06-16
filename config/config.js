@@ -1,7 +1,7 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-const envs = ['PORT', 'NODE_ENV', 'CORS_ORIGIN', 'CORS_ALLOWED_HEADERS', 'CORS_METHODS', 'DB_SERVER_SELECTION_TIMEOUT_MS', 'WS_CORS_ORIGIN'];
+const envs = ['PORT', 'NODE_ENV', 'CORS_ORIGIN', 'CORS_ALLOWED_HEADERS', 'CORS_METHODS', 'DB_SERVER_SELECTION_TIMEOUT_MS', 'WS_CORS_ORIGIN', 'MAIL_HOST', 'MAIL_PORT', 'MAIL_SECURE', 'MAIL_USER', 'MAIL_PASS'];
 const envs_req = ['PORT', 'DB_URL'];
 
 // Check if required environment variables are set
