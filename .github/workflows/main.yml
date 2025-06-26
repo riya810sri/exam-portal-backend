@@ -47,7 +47,10 @@ jobs:
       - name: Ensure `tar` Installed
         run: |
           sudo apt-get update && sudo apt-get install -y tar
-
+      - name: switch branch
+        run: |
+          git checkout main
+      
       - name: Archive Project (Excluding Unwanted Files)
         run: |
           tar --exclude='.git' --exclude='.github' --exclude='node_modules' --ignore-failed-read --warning=no-file-changed -czf project.tar.gz .
