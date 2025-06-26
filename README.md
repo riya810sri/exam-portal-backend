@@ -1,6 +1,6 @@
 # Exam Portal Backend
 
-A comprehensive backend system for managing online exams, assessments, and certifications.
+#A comprehensive backend system for managing online exams, assessments, and certifications.
 
 ## Features
 
