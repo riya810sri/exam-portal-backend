@@ -163,7 +163,7 @@ const deleteRole = async (req, res) => {
 // Assign role to user
 const assignRole = async (req, res) => {
   try {
-    const { userId, roleId } = req.body;
+    const { userId, roleId, rolename } = req.body;
     
     // Check if user exists
     const user = await User.findById(userId);
@@ -201,7 +201,11 @@ const assignRole = async (req, res) => {
     
     // Update user's isAdmin status if role is admin
     user.isAdmin = role.name === 'admin';
+
     await user.save();
+    user.role = rolename; 
+    await user.save();  // Ensure the user document is saved with the new role
+    // Update user's role field
     
     res.status(200).json({
       success: true,
